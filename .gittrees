@@ -1,0 +1,4 @@
+[subtree "opencv/bpc"]
+	url = https://github.com/opencv/bpc.git
+	path = opencv/bpc
+	branch = baseline_solution
