@@ -1,0 +1,14 @@
+# Request
+
+# List of object IDs to look for in the scene.
+uint64[] object_ids
+
+
+# Scene images.
+Camera[] cameras
+Photoneo photoneo
+
+---
+
+# Response
+PoseEstimate[] pose_estimates

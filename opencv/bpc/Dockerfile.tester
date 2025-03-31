@@ -1,0 +1,72 @@
+FROM ros:jazzy-perception AS base
+
+SHELL [ "/bin/bash" , "-c" ]
+
+WORKDIR /opt/ros/underlay
+
+ENV ROS_HOME=/tmp
+ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
+
+# underlay stage: base + dependencies built
+FROM base AS underlay
+
+ADD ibpc_interfaces /opt/ros/underlay/src/ibpc_interfaces
+
+RUN . /opt/ros/jazzy/setup.sh \
+    && apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src --rosdistro jazzy -yir \
+    && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --event-handlers=console_direct+ \
+    --merge-install
+
+FROM underlay AS overlay
+
+RUN apt-get update \
+    &&  apt install -y ros-jazzy-rmw-zenoh-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD ibpc_tester /opt/ros/overlay/src/ibpc_tester
+
+RUN . /opt/ros/jazzy/setup.sh \
+    && . /opt/ros/underlay/install/setup.sh \
+    && cd /opt/ros/overlay \
+    # clone bop_toolkit and pin version to include changes from https://github.com/thodan/bop_toolkit/pull/176.
+    && cd src/ && git clone https://github.com/thodan/bop_toolkit.git && cd bop_toolkit && git checkout 0cb4be14cbde81d9d19d6dfc8a2ae253cc42d411 && cd ../../ \
+    # && rosdep install --from-paths src --ignore-src --rosdistro jazzy -yir \
+    && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --event-handlers=console_direct+ \
+    --merge-install
+
+# result stage: base + copied install folders from the overlay + service setup.
+FROM base
+
+RUN apt update \
+    && sudo apt install curl -y \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2-testing/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+RUN apt-get update \
+    &&  apt install -y ros-jazzy-rmw-zenoh-cpp python3-imageio python3-pandas python3-png python3-pip python3-scipy \
+    && rm -rf /var/lib/apt/lists/*
+
+# TODO remove deprecated pytz usage
+RUN python3 -m pip install pytz --break-system-packages
+
+COPY --from=overlay /opt/ros/underlay/install /opt/ros/underlay/install
+COPY --from=overlay /opt/ros/overlay/install /opt/ros/overlay/install
+
+RUN sed --in-place \
+    --expression '$isource "/opt/ros/overlay/install/setup.bash"' \
+    /ros_entrypoint.sh
+
+
+ENV DATASET_NAME=ipd
+ENV OUTPUT_DIR=/submission
+ENV OUTPUT_FILENAME=submission.csv
+ENV SERVICE_PACKAGE=ibpc_tester
+ENV SERVICE_EXECUTABLE_NAME=ibpc_tester
+ENV SPLIT_TYPE=val
+
+CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
+    --ros-args -p dataset_name:=${DATASET_NAME} -p split_type:=${SPLIT_TYPE} -p output_dir:=${OUTPUT_DIR} -p output_filename:=${OUTPUT_FILENAME}
