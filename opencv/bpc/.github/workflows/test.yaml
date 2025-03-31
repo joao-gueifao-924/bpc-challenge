@@ -1,0 +1,81 @@
+name: Basic CI
+on: [push]
+
+jobs:
+  basic_ci:
+    name: Basic CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      -
+        name: Remove unused content for disk space
+        shell: bash
+        run: |
+            df -h
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /usr/local/lib/android
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /opt/hostedtoolcache/CodeQL
+            sudo docker image prune --all --force
+            sudo docker builder prune -a
+            df -h
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Build estimator
+        uses: docker/build-push-action@v6
+        with:
+          file: Dockerfile.estimator
+          load: true
+          tags: pose_estimator:latest
+      -
+        name: Build tester
+        uses: docker/build-push-action@v6
+        with:
+          file: Dockerfile.tester
+          load: true
+          tags: estimator-tester:latest
+      -
+        name: Build ibpc_py
+        run: |
+          cd ibpc_py
+          python -m pip install -e .
+      - name: Check space
+        run: |
+          df -h
+          docker images
+      -
+        name: Run bpc fetch
+        run: | 
+          bpc fetch ipd  --remove-zip-after-extract
+          df -h
+      -
+       name: Run bpc test
+       continue-on-error: true
+       run: |
+         bpc test pose_estimator:latest ipd --tester-image estimator-tester:latest --no-gpu
+      -
+       name: Check Disk space
+       run: |
+          df -h
+      -
+       name: Check results
+       run: |
+          cat ibpc_test_output.log
+          cat ibpc_zenoh_output.log
+          cat submission.csv
+
+#TODO(tfoote) Also add tests for public images
+
+

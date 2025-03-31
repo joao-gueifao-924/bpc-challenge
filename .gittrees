@@ -1,0 +1,10 @@
+# This file is manually edited. It's only purpose is to have a
+# reference to the fact that we have a git subtree in our repository.
+# Opposed to git submodules, git does not provide any explicit references
+# to the existence of subtrees, sadly.
+# Remember to update this file whenever updating subtrees in our repository!
+
+[subtree "opencv/bpc"]
+	url = https://github.com/opencv/bpc.git
+	path = opencv/bpc
+	branch = baseline_solution

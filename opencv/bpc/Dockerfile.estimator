@@ -1,0 +1,89 @@
+FROM ros:jazzy-perception AS base
+
+SHELL [ "/bin/bash" , "-c" ]
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Prerequisites
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget software-properties-common gnupg2 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/ros/underlay
+
+# TODO(tfoote) Add documentation of why these are required
+ENV ROS_HOME=/tmp
+ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
+
+# underlay stage: base + dependencies built
+FROM base AS underlay
+
+ARG MODEL_DIR=models
+
+ADD ibpc_interfaces /opt/ros/underlay/src/ibpc_interfaces
+
+RUN . /opt/ros/jazzy/setup.sh \
+    && apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src --rosdistro jazzy -yr \
+    && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --event-handlers=console_direct+ \
+    --merge-install
+
+ADD ${MODEL_DIR} /opt/ros/underlay/install/models
+COPY bpc_baseline /opt/ros/underlay/install/bpc_baseline/
+
+FROM underlay AS overlay
+
+ARG SERVICE_PACKAGE=ibpc_pose_estimator_py
+ARG SERVICE_EXECUTABLE_NAME=ibpc_pose_estimator
+
+RUN apt-get update \
+    &&  apt install -y ros-jazzy-rmw-zenoh-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD ${SERVICE_PACKAGE} /opt/ros/overlay/src/${SERVICE_PACKAGE}
+
+RUN . /opt/ros/jazzy/setup.sh \
+    && . /opt/ros/underlay/install/setup.sh \
+    && cd /opt/ros/overlay \
+    && rosdep install --from-paths src --ignore-src --rosdistro jazzy -yr \
+    && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --event-handlers=console_direct+ \
+    --merge-install
+
+# result stage: base + copied install folders from the overlay + service setup.
+FROM base
+RUN apt-get update
+RUN apt-get install -y libegl1-mesa-dev libgles2-mesa-dev libx11-dev libxext-dev libxrender-dev python3-pip
+RUN python3 -m pip install --upgrade setuptools --break-system-packages
+COPY bpc_baseline/docker/requirements.txt .
+RUN pip install -r requirements.txt --break-system-packages
+
+
+ARG SERVICE_PACKAGE=ibpc_pose_estimator_py
+ARG SERVICE_EXECUTABLE_NAME=ibpc_pose_estimator
+
+RUN apt update \
+    && sudo apt install curl -y \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2-testing/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+RUN apt-get update \
+    &&  apt install -y ros-jazzy-rmw-zenoh-cpp python3-imageio python3-png python3-pip python3-scipy \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=overlay /opt/ros/underlay/install /opt/ros/underlay/install
+COPY --from=overlay /opt/ros/overlay/install /opt/ros/overlay/install
+
+RUN sed --in-place \
+    --expression '$isource "/opt/ros/overlay/install/setup.bash"' \
+    /ros_entrypoint.sh
+
+ENV SERVICE_PACKAGE=${SERVICE_PACKAGE}
+ENV SERVICE_EXECUTABLE_NAME=${SERVICE_EXECUTABLE_NAME}
+ENV MODEL_DIR=/opt/ros/underlay/install/models
+ENV PYTHONPATH=$PYTHONPATH:/opt/ros/underlay/install/bpc_baseline/
+
+CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
+    --ros-args -p model_dir:=${MODEL_DIR}
