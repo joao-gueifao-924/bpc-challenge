@@ -9,6 +9,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget software-properties-common gnupg2 \
     && rm -rf /var/lib/apt/lists/*
 
+# As per tip in https://github.com/opencv/bpc/tree/baseline_solution#tips
+# Get installation of NVIDIA CUDA higher in the docker layers to avoid
+# redownloading it over and over whenever we make changes
+RUN \
+    wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm cuda-keyring_1.1-1_all.deb && \
+    \
+    apt-get update && \
+    apt-get -y install cuda-toolkit && \
+    rm -rf /var/lib/apt/lists/*
+
+
 WORKDIR /opt/ros/underlay
 
 # TODO(tfoote) Add documentation of why these are required
