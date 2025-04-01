@@ -25,6 +25,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+*.zip
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -169,3 +170,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Intrinsic Plenoptic Dataset
+opencv/bpc/ipd
+
+# Python virtual environment for running BPC challenge code
+opencv/bpc/bpc_env
+
+# File generated when running, for example, `bpc test bpc_pose_estimator:example ipd`
+opencv/bpc/submission.csv
