@@ -12,6 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # As per tip in https://github.com/opencv/bpc/tree/baseline_solution#tips
 # Get installation of NVIDIA CUDA higher in the docker layers to avoid
 # redownloading it over and over whenever we make changes
+
+
+# Clean up any existing CUDA repository configurations
+RUN rm -f /etc/apt/sources.list.d/cuda*.list && \
+    rm -f /usr/share/keyrings/cuda-archive-keyring.gpg
+
+# Download and install the new keyring
 RUN \
     wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
@@ -70,8 +77,6 @@ FROM base
 RUN apt-get update
 RUN apt-get install -y libegl1-mesa-dev libgles2-mesa-dev libx11-dev libxext-dev libxrender-dev python3-pip
 RUN python3 -m pip install --upgrade setuptools --break-system-packages
-COPY bpc_baseline/docker/requirements.txt .
-RUN pip install -r requirements.txt --break-system-packages
 
 
 ARG SERVICE_PACKAGE=ibpc_pose_estimator_py
@@ -97,6 +102,25 @@ ENV SERVICE_PACKAGE=${SERVICE_PACKAGE}
 ENV SERVICE_EXECUTABLE_NAME=${SERVICE_EXECUTABLE_NAME}
 ENV MODEL_DIR=/opt/ros/underlay/install/models
 ENV PYTHONPATH=$PYTHONPATH:/opt/ros/underlay/install/bpc_baseline/
+
+RUN pip install ultralytics==8.3.61 --break-system-packages
+
+# Need to add the following (1) and (2) below. Running `bpc test bpc_pose_estimator:example ipd` command
+# will trigger a Docker build upon this docker image by adding Rocker extensions.
+
+# (1) -- When building further Docker layers, an operation tries to remove certain 
+# NVIDIA libraries which are actually passed by the NVIDIA Container toolkit from the host.
+# An error is thrown stating that those libraries are in use and hence cannot be removed.
+# Setting these two variables prevents that and allows the build to continue.
+ENV NVIDIA_VISIBLE_DEVICES=void
+ENV NVIDIA_DRIVER_CAPABILITIES=utility,compute
+
+# (2) -- When building further Docker layers, an operation
+# appends /usr/cuda/lib64/stubs into the LD_LIBRARY_PATH environment variable (why?), taking
+# preference over the real library files.
+# Simply deleting this folder allows libraries like NVIDIA WARP (which we use in FoundationPose)
+# to make use of the real CUDA libraries, not the stub ones.
+RUN rm -rf /usr/local/cuda/lib64/stubs
 
 CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
     --ros-args -p model_dir:=${MODEL_DIR}
