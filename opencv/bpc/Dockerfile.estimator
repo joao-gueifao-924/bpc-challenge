@@ -1,4 +1,4 @@
-FROM ros:jazzy-perception AS base
+FROM ros2-jazzy-jalisco-custom AS base
 
 SHELL [ "/bin/bash" , "-c" ]
 
