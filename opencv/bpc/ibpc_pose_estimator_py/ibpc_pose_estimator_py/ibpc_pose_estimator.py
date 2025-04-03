@@ -22,6 +22,21 @@ import rclpy
 from rclpy.node import Node
 
 
+# Import FoundationPose, located at the / root folder, for the time being
+# TODO: improve this
+import sys
+sys.path.append("/")
+from estimater import *
+from datareader import *
+est_refine_iter=5
+debug=1
+debug_dir='//debug'
+shorter_side = 500
+
+print("Instantiating PoseEstimator class...")
+poseEstimator = PoseEstimator(debug=debug)
+print("Finished instantiating PoseEstimator class...")
+
 # Helper functions
 def ros_pose_to_mat(pose: PoseMsg):
     r = Rotation.from_quat(
