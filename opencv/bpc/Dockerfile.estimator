@@ -104,6 +104,7 @@ ENV MODEL_DIR=/opt/ros/underlay/install/models
 ENV PYTHONPATH=$PYTHONPATH:/opt/ros/underlay/install/bpc_baseline/
 
 RUN pip install ultralytics==8.3.61 --break-system-packages
+RUN pip install debugpy --break-system-packages
 
 # Need to add the following (1) and (2) below. Running `bpc test bpc_pose_estimator:example ipd` command
 # will trigger a Docker build upon this docker image by adding Rocker extensions.
@@ -121,6 +122,11 @@ ENV NVIDIA_DRIVER_CAPABILITIES=utility,compute
 # Simply deleting this folder allows libraries like NVIDIA WARP (which we use in FoundationPose)
 # to make use of the real CUDA libraries, not the stub ones.
 RUN rm -rf /usr/local/cuda/lib64/stubs
+
+# Expose port 5678 so that debugpy can attach to python scripts running inside this container
+# Note: you don't need to do port mapping when trying to run a Docker container from this image
+# given that it will ultimately run within host's network.
+EXPOSE 5678
 
 CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
     --ros-args -p model_dir:=${MODEL_DIR}

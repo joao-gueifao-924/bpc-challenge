@@ -21,6 +21,13 @@ from ibpc_interfaces.srv import GetPoseEstimates
 import rclpy
 from rclpy.node import Node
 
+import debugpy
+
+print("Path of the current script file: ", os.path.abspath(__file__))
+
+# Listen on all interfaces (0.0.0.0) for remote debugging, 
+# since we're in host network mode:
+debugpy.listen(("0.0.0.0", 5678))
 
 # Import FoundationPose, located at the / root folder, for the time being
 # TODO: improve this
@@ -147,6 +154,12 @@ class PoseEstimator(Node):
         photoneo: Camera,
     ) -> List[PoseEstimateMsg]:
         pose_estimates = []
+
+        # Uncomment this if you want the application to wait until the debugger attaches
+        print("Waiting for debugger to attach...")
+        debugpy.wait_for_client()
+        print("Debugger just attached. Continuing...")
+
         for object_id in object_ids:
             if object_id not in self.model_cache:
                 yolo_model_path = os.path.join(self.model_dir, f'detection/obj_{object_id}/yolo11-detection-obj_{object_id}.pt')
