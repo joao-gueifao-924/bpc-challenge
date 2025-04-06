@@ -21,28 +21,67 @@ from ibpc_interfaces.srv import GetPoseEstimates
 import rclpy
 from rclpy.node import Node
 
-import debugpy
 
-print("Path of the current script file: ", os.path.abspath(__file__))
+import sys, torch, math
 
-# Listen on all interfaces (0.0.0.0) for remote debugging, 
-# since we're in host network mode:
-debugpy.listen(("0.0.0.0", 5678))
+try:
+    _, total_gpu_memory = torch.cuda.mem_get_info()
+    total_gpu_memory /= 1024**3 # gigabytes
+
+    # reported value will always a little less than the hardware value
+    # due to Torch baseline memory footprint
+    total_gpu_memory = math.ceil(total_gpu_memory)
+    print(f"Total GPU memory: {total_gpu_memory:.2f} GB")
+except:
+    total_gpu_memory = 24 # targeting the NVIDIA L4 GPU with 24 GB of VRAM
+
+
+DO_DEBUG_SESSION = False
+USE_FOUNDATIONPOSE_ESTIMATOR = True # else use baseline solution
+OBJECT_CAD_MODEL_PATH = "/opt/ros/underlay/install/3d_models" # mounted at runtime through Docker
+
+
+if DO_DEBUG_SESSION:
+    import debugpy
+    print("Path of the current script file: ", os.path.abspath(__file__))
+    
+    # Listen on all interfaces (0.0.0.0) for remote debugging, 
+    # since we're in host network mode:
+    debugpy.listen(("0.0.0.0", 5678))
+
 
 # Import FoundationPose, located at the / root folder, for the time being
 # TODO: improve this
-import sys
-sys.path.append("/")
-from estimater import *
-from datareader import *
-est_refine_iter=5
-debug=1
-debug_dir='//debug'
-shorter_side = 500
+if USE_FOUNDATIONPOSE_ESTIMATOR:
+    sys.path.append("/")
+    from estimater import PoseEstimator as FoundationPoseEstimator
+    from datareader import IpdReader
+    est_refine_iter=5
+    debug = 1 if DO_DEBUG_SESSION else 0
+    debug_dir='//debug'
 
-print("Instantiating PoseEstimator class...")
-poseEstimator = PoseEstimator(debug=debug)
-print("Finished instantiating PoseEstimator class...")
+
+    def get_suitable_shorter_side(total_gpu_memory):
+        # Use two successful experimental samples, with 6 and 8 GB VRAM GPUs
+        x1 = 6.0 # GB
+        y1 = 360.0 # pixels
+        x2 = 8.0 # GB
+        y2 = 400.0 # pixels
+
+        ratio = (y2-y1) / (x2-x1) # pixels/GB, how many pixels increase per additional gigabyte of memory
+        shorter_side = y2 + ratio * (total_gpu_memory - x2) # pixels
+
+        # shorter_side will be 720 pixels for 24 GB of VRAM
+
+        return shorter_side
+    shorter_side = get_suitable_shorter_side(total_gpu_memory)
+        
+    
+    print("Instantiating PoseEstimator class...")
+    foundationPoseEstimator = FoundationPoseEstimator(debug=debug)
+    print("Finished instantiating PoseEstimator class...")
+
+
 
 # Helper functions
 def ros_pose_to_mat(pose: PoseMsg):
@@ -116,6 +155,7 @@ class PoseEstimator(Node):
         self.get_logger().info("Starting bpc_pose_estimator...")
         # Declare parameters
         self.model_cache = {}
+        self.object_cad_model_cache = {}
         self.model_dir = (
             self.declare_parameter("model_dir", "").get_parameter_value().string_value
         )
@@ -125,6 +165,8 @@ class PoseEstimator(Node):
         srv_name = "/get_pose_estimates"
         self.get_logger().info(f"Pose estimates can be queried over srv {srv_name}.")
         self.srv = self.create_service(GetPoseEstimates, srv_name, self.srv_cb)
+        self.object_cad_model_cache, _ = IpdReader.load_object_meshes(OBJECT_CAD_MODEL_PATH)
+        
 
     def srv_cb(self, request, response):
         if len(request.object_ids) == 0:
@@ -156,9 +198,10 @@ class PoseEstimator(Node):
         pose_estimates = []
 
         # Uncomment this if you want the application to wait until the debugger attaches
-        print("Waiting for debugger to attach...")
-        debugpy.wait_for_client()
-        print("Debugger just attached. Continuing...")
+        if DO_DEBUG_SESSION:
+            print("Waiting for debugger to attach...")
+            debugpy.wait_for_client()
+            print("Debugger just attached. Continuing...")
 
         for object_id in object_ids:
             if object_id not in self.model_cache:
@@ -178,29 +221,114 @@ class PoseEstimator(Node):
             Ks = [x.intrinsics for x in cams]
             capture = Capture(images, Ks, RTs, object_id)
             detections = pose_estimator._detect(capture)
-            pose_predictions = pose_estimator._match(capture, detections)
-            pose_estimator._estimate_rotation(pose_predictions)
-            for detection in pose_predictions:
-                pose_estimate = PoseEstimateMsg()
-                pose_estimate.obj_id = object_id
-                pose_estimate.score = 1.0
-                pose_estimate.pose.position.x = detection.pose[0, 3]
-                pose_estimate.pose.position.y = detection.pose[1, 3]
-                pose_estimate.pose.position.z = detection.pose[2, 3]
-                rot = rot_to_quat(detection.pose[:3, :3])
-                pose_estimate.pose.orientation.x = rot[0]
-                pose_estimate.pose.orientation.y = rot[1]
-                pose_estimate.pose.orientation.z = rot[2]
-                pose_estimate.pose.orientation.w = rot[3]
-                pose_estimates.append(pose_estimate)
-        """
-            Your implementation goes here.
-            msg = PoseEstimateMsg()
-            # your logic here.
-            pose_estimates.append(msg)
-            
 
-        """
+            if USE_FOUNDATIONPOSE_ESTIMATOR:
+                # Returns a dictionary mapping camera indices to a list of detections.
+                # Each detection is a dictionary with keys "bbox" and "bb_center".
+
+                # print("list(detections.keys()): ", list(detections.keys())) # [0, 1, 2]
+
+                # Let's use only RGB camera 1 for now.
+
+                image_rgb_rows, image_rgb_cols = cam_1.rgb.shape[0], cam_1.rgb.shape[1]
+                
+                if DO_DEBUG_SESSION:
+                    print(f"total detections of object #{object_id}: {len(detections[0])}")
+
+                for detection in detections[0]:
+                    start_inference_time = time.time()
+                    # 'bbox': (x1, y1, x2, y2),
+                    (x1, y1, x2, y2) = detection['bbox']
+
+                    #print("BBox: ", (x1, y1, x2, y2))
+                    #print("cam_1.depth: ", cam_1.depth.shape, np.sum((cam_1.depth > 0.001)),  cam_1.depth.dtype)
+
+                    # Create a binary mask for the detected object of same size as RGB image
+                    mask = np.zeros((image_rgb_rows, image_rgb_cols), dtype=np.uint8)
+
+                    # Fill in a white rectangle using the (x1, y1, x2, y2) corner coordinates:
+                    mask = cv2.rectangle(mask, (int(x1), int(y1)), (int(x2), int(y2)), 255, thickness=-1)
+                    
+                    if DO_DEBUG_SESSION:
+                        valid = (cam_1.depth>=0.001) & (mask>0)
+                        print("Area of valid: ", valid.sum())
+
+                    K     = cam_1.intrinsics.copy()
+                    color = cam_1.rgb.copy()
+                    depth = cam_1.depth.copy()
+
+                    # Should we reduce image working size?
+                    if shorter_side is not None and shorter_side > 0:
+                        original_shorter_side = np.min(color.shape)
+                        scale_factor = shorter_side / original_shorter_side
+                        if (scale_factor < 1.0):
+                            print("scale factor: ", scale_factor)
+                            K[:2] *= scale_factor
+                            color = cv2.resize(color, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
+                            depth = cv2.resize(depth, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
+                            mask  = cv2.resize(mask,  None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
+                        
+                    color = cv2.cvtColor(color, cv2.COLOR_GRAY2RGB)
+                    mask = mask.astype(bool)
+
+                    # Multiply by the depth factor (0.1) to get from raw depth pixel values to millimeters,
+                    # then convert from lmilimeters to meters (what FoundationPose expects).
+                    depth *= 0.1 / 1000 # TODO put this convertion elsewhere?
+
+                    object_pose = foundationPoseEstimator.estimate( K     = K, 
+                                                                    mesh  = self.object_cad_model_cache[object_id],
+                                                                    color = color,
+                                                                    depth = depth,
+                                                                    mask  = mask
+                                                                )
+                    
+                    # Need to convert from meters (output by FoundationPose) to millimeters again
+                    object_pose[0:3, 3] *= 1000.0
+
+                    # Need to map from camera pose to world pose
+                    # cam_1.pose is defined as transformation matrix world-to-camera, hence we need to invert it
+                    # to become camera-to-world
+                    object_pose = np.linalg.inv(cam_1.pose) @ object_pose
+
+                    if DO_DEBUG_SESSION:
+                        print("object_pose: ")
+                        print(object_pose)
+                        print("--------------------")
+
+                    pose_estimate = PoseEstimateMsg()
+                    pose_estimate.obj_id = object_id
+                    pose_estimate.score = 1.0
+                    
+                    pose_estimate.pose.position.x = object_pose[0, 3]
+                    pose_estimate.pose.position.y = object_pose[1, 3]
+                    pose_estimate.pose.position.z = object_pose[2, 3]
+                    rot = rot_to_quat(object_pose[:3, :3])
+                    pose_estimate.pose.orientation.x = rot[0]
+                    pose_estimate.pose.orientation.y = rot[1]
+                    pose_estimate.pose.orientation.z = rot[2]
+                    pose_estimate.pose.orientation.w = rot[3]
+                    pose_estimates.append(pose_estimate)
+
+                    inference_time = time.time() - start_inference_time
+                    print(f"Foundation Pose inference time for one object instance: {inference_time:.3f} seconds")
+
+            else: # this is code from baseline solution, just keeping it here for reference
+                pose_predictions = pose_estimator._match(capture, detections)
+                pose_estimator._estimate_rotation(pose_predictions)
+                for detection in pose_predictions:
+                    pose_estimate = PoseEstimateMsg()
+                    pose_estimate.obj_id = object_id
+                    pose_estimate.score = 1.0
+                    pose_estimate.pose.position.x = detection.pose[0, 3]
+                    pose_estimate.pose.position.y = detection.pose[1, 3]
+                    pose_estimate.pose.position.z = detection.pose[2, 3]
+                    rot = rot_to_quat(detection.pose[:3, :3])
+                    pose_estimate.pose.orientation.x = rot[0]
+                    pose_estimate.pose.orientation.y = rot[1]
+                    pose_estimate.pose.orientation.z = rot[2]
+                    pose_estimate.pose.orientation.w = rot[3]
+                    pose_estimates.append(pose_estimate)
+
         return pose_estimates
 
 
