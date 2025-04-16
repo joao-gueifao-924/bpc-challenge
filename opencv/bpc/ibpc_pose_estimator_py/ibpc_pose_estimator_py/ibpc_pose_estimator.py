@@ -38,7 +38,10 @@ except:
 
 DO_DEBUG_SESSION = False
 USE_FOUNDATIONPOSE_ESTIMATOR = True # else use baseline solution
+LOW_GPU_MEMORY_MODE=False
+SHORTER_SIDE = 720 # pixels
 OBJECT_CAD_MODEL_PATH = "/opt/ros/underlay/install/3d_models" # mounted at runtime through Docker
+
 
 
 if DO_DEBUG_SESSION:
@@ -56,30 +59,31 @@ if USE_FOUNDATIONPOSE_ESTIMATOR:
     sys.path.append("/")
     from estimater import PoseEstimator as FoundationPoseEstimator
     from datareader import IpdReader
-    est_refine_iter=5
-    debug = 1 if DO_DEBUG_SESSION else 0
-    debug_dir='//debug'
+    POSE_REFINER_TOTAL_ITERATIONS=5
+    DEBUG_LEVEL = 1 if DO_DEBUG_SESSION else 0
+    DEBUG_DIR='//debug'
 
+    # deprecated, not currently used anymore
+    # def get_suitable_shorter_side(total_gpu_memory):
+    #     # Use two successful experimental samples, with 6 and 8 GB VRAM GPUs
+    #     x1 = 6.0 # GB
+    #     y1 = 360.0 # pixels
+    #     x2 = 8.0 # GB
+    #     y2 = 400.0 # pixels
 
-    def get_suitable_shorter_side(total_gpu_memory):
-        # Use two successful experimental samples, with 6 and 8 GB VRAM GPUs
-        x1 = 6.0 # GB
-        y1 = 360.0 # pixels
-        x2 = 8.0 # GB
-        y2 = 400.0 # pixels
+    #     ratio = (y2-y1) / (x2-x1) # pixels/GB, how many pixels increase per additional gigabyte of memory
+    #     shorter_side = y2 + ratio * (total_gpu_memory - x2) # pixels
 
-        ratio = (y2-y1) / (x2-x1) # pixels/GB, how many pixels increase per additional gigabyte of memory
-        shorter_side = y2 + ratio * (total_gpu_memory - x2) # pixels
+    #     # shorter_side will be 720 pixels for 24 GB of VRAM
 
-        # shorter_side will be 720 pixels for 24 GB of VRAM
-
-        return shorter_side
-    shorter_side = get_suitable_shorter_side(total_gpu_memory)
-    print("shorter_side: ", shorter_side)
+    #     return shorter_side
+    # shorter_side = get_suitable_shorter_side(total_gpu_memory)
+    # print("shorter_side: ", shorter_side)
         
     
     print("Instantiating PoseEstimator class...")
-    foundationPoseEstimator = FoundationPoseEstimator(debug=debug)
+    foundationPoseEstimator = FoundationPoseEstimator(debug=DEBUG_LEVEL, est_refine_iter=POSE_REFINER_TOTAL_ITERATIONS, 
+                                  debug_dir=DEBUG_DIR, low_gpu_mem_mode=LOW_GPU_MEMORY_MODE)
     print("Finished instantiating PoseEstimator class...")
 
 
@@ -259,9 +263,9 @@ class PoseEstimator(Node):
                     depth = cam_1.depth.copy()
 
                     # Should we reduce image working size?
-                    if shorter_side is not None and shorter_side > 0:
+                    if SHORTER_SIDE is not None and SHORTER_SIDE > 0:
                         original_shorter_side = np.min(color.shape)
-                        scale_factor = shorter_side / original_shorter_side
+                        scale_factor = SHORTER_SIDE / original_shorter_side
                         if (scale_factor < 1.0):
                             #print("scale factor: ", scale_factor)
                             K[:2] *= scale_factor
@@ -276,7 +280,8 @@ class PoseEstimator(Node):
                     # then convert from lmilimeters to meters (what FoundationPose expects).
                     depth *= 0.1 / 1000 # TODO put this convertion elsewhere?
 
-                    object_pose = foundationPoseEstimator.estimate( K     = K, 
+                    object_pose = foundationPoseEstimator.estimate( object_class_id=object_id,
+                                                                    K     = K, 
                                                                     mesh  = self.object_cad_model_cache[object_id],
                                                                     color = color,
                                                                     depth = depth,
