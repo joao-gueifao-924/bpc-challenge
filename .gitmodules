@@ -1,3 +1,6 @@
 [submodule "FoundationPose"]
 	path = FoundationPose
 	url = https://github.com/joao-gueifao-924/FoundationPose.git
+[submodule "SAM-6D"]
+	path = SAM-6D
+	url = git@github.com:joao-gueifao-924/SAM-6D.git
