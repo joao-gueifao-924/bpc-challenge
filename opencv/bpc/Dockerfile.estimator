@@ -82,12 +82,14 @@ RUN python3 -m pip install --upgrade setuptools --break-system-packages
 ARG SERVICE_PACKAGE=ibpc_pose_estimator_py
 ARG SERVICE_EXECUTABLE_NAME=ibpc_pose_estimator
 
-RUN apt update \
-    && sudo apt install curl -y \
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2-testing/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+# Manually adding changes from https://github.com/opencv/bpc/pull/69/commits/3e172efcb0e90a8ff846c1aeb56935cbba70b553
+# RUN apt update \
+#     && sudo apt install curl -y \
+#     && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+#     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2-testing/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
 RUN apt-get update \
+    && apt upgrade -y \
     &&  apt install -y ros-jazzy-rmw-zenoh-cpp python3-imageio python3-png python3-pip python3-scipy \
     && rm -rf /var/lib/apt/lists/*
 
@@ -127,6 +129,10 @@ RUN rm -rf /usr/local/cuda/lib64/stubs
 # Note: you don't need to do port mapping when trying to run a Docker container from this image
 # given that it will ultimately run within host's network.
 EXPOSE 5678
+
+# Resolving ModuleNotFoundError: No module named '_distutils_hack'. For some reason, when switiching from FoundationPose to SAM6D algorithm implementation, this error show up when trying to run the `bpc test` routine.
+# According to the bot, This error indicates a problem related to the setuptools package and its handling of the deprecated distutils module within the Python environment inside your Docker container. It's triggered by the distutils-precedence.pth file. While updating setuptools is often recommended, your Docker build log already shows an upgrade step (RUN python3 -m pip install --upgrade setuptools --break-system-packages). Since the error persists at runtime, a common solution is to remove the file causing the traceback.
+RUN rm -f /usr/lib/python3/dist-packages/distutils-precedence.pth
 
 CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
     --ros-args -p model_dir:=${MODEL_DIR}

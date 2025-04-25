@@ -13,7 +13,8 @@
 
 
 
-FROM foundationpose_custom:latest
+#FROM foundationpose_custom:latest
+FROM sam-6d:latest
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
