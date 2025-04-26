@@ -193,6 +193,14 @@ class PoseEstimator(Node):
         self.model_dir = (
             self.declare_parameter("model_dir", "").get_parameter_value().string_value
         )
+
+        # Uncomment this if you want the application to wait until the debugger attaches
+        if DO_DEBUG_SESSION:
+            self.get_logger().fatal("Waiting for debugger to attach...")
+            debugpy.wait_for_client()
+            self.get_logger().fatal("Debugger just attached. Continuing...")
+
+
         if self.model_dir == "":
             raise Exception("ROS parameter model_dir not set.")
         self.get_logger().info(f"Model directory set to {self.model_dir}.")
@@ -220,21 +228,16 @@ class PoseEstimator(Node):
             self.sam6d.pem = PEM.PoseEstimatorModel(args)
             os.chdir(original_cwd)
 
-            if LOW_GPU_MEMORY_MODE:
-                ISM.load_descriptormodel_to_gpu(self.sam6d.segmentator_model)
-                self.sam6d.pem.unload_model_to_cpu()
-                gc.collect()
-                torch.cuda.empty_cache()
-
             # Get the directory where the current script is located
             #script_dir = os.path.dirname(os.path.abspath(__file__))
                 
             # Define the path to the 'Render' directory relative to the script
             self.sam6d.render_dir = os.path.join("/SAM-6D", 'Render')
 
-            # Object preparation stage. Render templates and infer descriptors out of them.
+            # Object preparation stage. Render templates and infer descriptors out of them. Save those descriptors for posterior use.
             self.sam6d.template_descriptors = {}
             for object_class_id in self.object_class_ids:
+                self.sam6d.template_descriptors[object_class_id] = {}
                 start_time = time.time()
                 mesh = self.object_cad_model_cache[object_class_id]
                 runtime_utils.render_object_templates(object_class_id, OBJECT_CAD_MODEL_PATH, self.sam6d.render_dir, TEMPLATE_OUTPUT_ROOT_DIR, BLENDER_PATH)
@@ -244,10 +247,24 @@ class PoseEstimator(Node):
                 descriptors, appe_descriptors = ISM.init_templates(
                     runtime_utils.get_obj_template_dir(object_class_id, TEMPLATE_OUTPUT_ROOT_DIR), 
                     self.sam6d.segmentator_model, self.sam6d.device)
-                self.sam6d.template_descriptors[object_class_id] = {}
                 self.sam6d.template_descriptors[object_class_id]["descriptors"] = descriptors
                 self.sam6d.template_descriptors[object_class_id]["appe_descriptors"] = appe_descriptors
-                self.get_logger().info(f"infer descriptors from from templates time: {time.time() - start_time} seconds")
+                self.get_logger().info(f"infer descriptors from templates time: {time.time() - start_time} seconds")
+
+                start_time = time.time()
+                all_tem_pts, all_tem_feat = self.sam6d.pem.get_templates(
+                    os.path.join(runtime_utils.get_obj_template_dir(object_class_id, TEMPLATE_OUTPUT_ROOT_DIR), "templates")
+                )
+                self.sam6d.template_descriptors[object_class_id]["all_tem_pts"] = all_tem_pts
+                self.sam6d.template_descriptors[object_class_id]["all_tem_feat"] = all_tem_feat
+                self.get_logger().info(f"get_templates time: {time.time() - start_time} seconds")
+
+            if LOW_GPU_MEMORY_MODE:
+                ISM.load_descriptormodel_to_gpu(self.sam6d.segmentator_model)
+                self.sam6d.pem.unload_model_to_cpu()
+                gc.collect()
+                torch.cuda.empty_cache()
+
 
         self.avg_total_inference_time = running_average_calc()
         
@@ -428,20 +445,17 @@ class PoseEstimator(Node):
 
                 # 2nd stage
                 # Now that we have the 2D object detections, let's run pose inference on each detection.
-                start_time = time.time()
-                # TODO fdalkjfdkajfkj I should run these only once and cache results!!!!
-                all_tem_pts, all_tem_feat = self.sam6d.pem.get_templates(
-                    os.path.join(runtime_utils.get_obj_template_dir(object_id, TEMPLATE_OUTPUT_ROOT_DIR), "templates")
-                )
-                self.get_logger().info(f"get_templates time: {time.time() - start_time} seconds")
 
                 start_time = time.time()
                 model_points = self.sam6d.pem.sample_points_from_mesh(mesh)
-                input_data, detections = self.sam6d.pem.prepare_test_data(obj_class_detections, color, depth, whole_pts, K, model_points)
+                input_data, _ = self.sam6d.pem.prepare_test_data(obj_class_detections, color, depth, whole_pts, K, model_points)
                 self.get_logger().info(f"sample_points_from_mesh and prepare_test_data time: {time.time() - start_time} seconds")
 
                 start_time = time.time()
-                pose_scores, pred_rot, pred_trans = self.sam6d.pem.infer_pose(all_tem_pts, all_tem_feat, input_data)
+                pose_scores, pred_rot, pred_trans = self.sam6d.pem.infer_pose(
+                    self.sam6d.template_descriptors[object_id]["all_tem_pts"], 
+                    self.sam6d.template_descriptors[object_id]["all_tem_feat"], 
+                    input_data)
                 pred_trans *= 1000.0 # convert from meters back to millimeters
                 self.get_logger().info(f"infer_pose time: {time.time() - start_time} seconds")
 
