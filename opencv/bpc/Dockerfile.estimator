@@ -1,4 +1,4 @@
-FROM ros:jazzy-perception AS base
+FROM ros2-jazzy-jalisco-custom AS base
 
 SHELL [ "/bin/bash" , "-c" ]
 
@@ -12,6 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # As per tip in https://github.com/opencv/bpc/tree/baseline_solution#tips
 # Get installation of NVIDIA CUDA higher in the docker layers to avoid
 # redownloading it over and over whenever we make changes
+
+
+# Clean up any existing CUDA repository configurations
+RUN rm -f /etc/apt/sources.list.d/cuda*.list && \
+    rm -f /usr/share/keyrings/cuda-archive-keyring.gpg
+
+# Download and install the new keyring
 RUN \
     wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
@@ -70,19 +77,19 @@ FROM base
 RUN apt-get update
 RUN apt-get install -y libegl1-mesa-dev libgles2-mesa-dev libx11-dev libxext-dev libxrender-dev python3-pip
 RUN python3 -m pip install --upgrade setuptools --break-system-packages
-COPY bpc_baseline/docker/requirements.txt .
-RUN pip install -r requirements.txt --break-system-packages
 
 
 ARG SERVICE_PACKAGE=ibpc_pose_estimator_py
 ARG SERVICE_EXECUTABLE_NAME=ibpc_pose_estimator
 
-RUN apt update \
-    && sudo apt install curl -y \
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2-testing/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+# Manually adding changes from https://github.com/opencv/bpc/pull/69/commits/3e172efcb0e90a8ff846c1aeb56935cbba70b553
+# RUN apt update \
+#     && sudo apt install curl -y \
+#     && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+#     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2-testing/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
 RUN apt-get update \
+    && apt upgrade -y \
     &&  apt install -y ros-jazzy-rmw-zenoh-cpp python3-imageio python3-png python3-pip python3-scipy \
     && rm -rf /var/lib/apt/lists/*
 
@@ -97,6 +104,35 @@ ENV SERVICE_PACKAGE=${SERVICE_PACKAGE}
 ENV SERVICE_EXECUTABLE_NAME=${SERVICE_EXECUTABLE_NAME}
 ENV MODEL_DIR=/opt/ros/underlay/install/models
 ENV PYTHONPATH=$PYTHONPATH:/opt/ros/underlay/install/bpc_baseline/
+
+RUN pip install ultralytics==8.3.61 --break-system-packages
+RUN pip install debugpy --break-system-packages
+
+# Need to add the following (1) and (2) below. Running `bpc test bpc_pose_estimator:example ipd` command
+# will trigger a Docker build upon this docker image by adding Rocker extensions.
+
+# (1) -- When building further Docker layers, an operation tries to remove certain 
+# NVIDIA libraries which are actually passed by the NVIDIA Container toolkit from the host.
+# An error is thrown stating that those libraries are in use and hence cannot be removed.
+# Setting these two variables prevents that and allows the build to continue.
+ENV NVIDIA_VISIBLE_DEVICES=void
+ENV NVIDIA_DRIVER_CAPABILITIES=utility,compute
+
+# (2) -- When building further Docker layers, an operation
+# appends /usr/cuda/lib64/stubs into the LD_LIBRARY_PATH environment variable (why?), taking
+# preference over the real library files.
+# Simply deleting this folder allows libraries like NVIDIA WARP (which we use in FoundationPose)
+# to make use of the real CUDA libraries, not the stub ones.
+RUN rm -rf /usr/local/cuda/lib64/stubs
+
+# Expose port 5678 so that debugpy can attach to python scripts running inside this container
+# Note: you don't need to do port mapping when trying to run a Docker container from this image
+# given that it will ultimately run within host's network.
+EXPOSE 5678
+
+# Resolving ModuleNotFoundError: No module named '_distutils_hack'. For some reason, when switiching from FoundationPose to SAM6D algorithm implementation, this error show up when trying to run the `bpc test` routine.
+# According to the bot, This error indicates a problem related to the setuptools package and its handling of the deprecated distutils module within the Python environment inside your Docker container. It's triggered by the distutils-precedence.pth file. While updating setuptools is often recommended, your Docker build log already shows an upgrade step (RUN python3 -m pip install --upgrade setuptools --break-system-packages). Since the error persists at runtime, a common solution is to remove the file causing the traceback.
+RUN rm -f /usr/lib/python3/dist-packages/distutils-precedence.pth
 
 CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
     --ros-args -p model_dir:=${MODEL_DIR}
