@@ -22,6 +22,8 @@ import rclpy
 from rclpy.node import Node
 
 
+import trimesh
+import shutil
 import sys, torch, math
 
 try:
@@ -42,6 +44,20 @@ LOW_GPU_MEMORY_MODE=False
 SHORTER_SIDE = 500 # pixels
 OBJECT_CAD_MODEL_PATH = "/opt/ros/underlay/install/3d_models" # mounted at runtime through Docker
 
+DO_VISUAL_DEBUG = False
+if DO_VISUAL_DEBUG:
+    # Hijack the 3D models folder Docker volume mount to store debug output
+    YOLO_DEBUG_OUTPUT_DIR = os.path.join(OBJECT_CAD_MODEL_PATH, "yolo_debug_output")
+    if os.path.exists(YOLO_DEBUG_OUTPUT_DIR): 
+        shutil.rmtree(YOLO_DEBUG_OUTPUT_DIR)
+    os.makedirs(YOLO_DEBUG_OUTPUT_DIR)
+    YOLO_DEBUG_OUTPUT_IMAGE_COUNTER = 0
+    # Create a palette of colors for the bounding boxes for 10 objects
+    YOLO_OBJECT_ID_COLORS = [
+        (0, 255, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0),
+        (0, 255, 255), (255, 0, 255), (128, 128, 128), (128, 0, 0),
+        (0, 128, 0), (0, 0, 128)
+    ]
 
 
 if DO_DEBUG_SESSION:
@@ -57,6 +73,7 @@ if DO_DEBUG_SESSION:
 # TODO: improve this
 if USE_FOUNDATIONPOSE_ESTIMATOR:
     sys.path.append("/")
+    from Utils import draw_xyz_axis, draw_posed_3d_box
     from estimater import PoseEstimator as FoundationPoseEstimator
     from datareader import IpdReader
     POSE_REFINER_TOTAL_ITERATIONS=5
@@ -208,6 +225,13 @@ class PoseEstimator(Node):
             debugpy.wait_for_client()
             print("Debugger just attached. Continuing...")
 
+        if DO_VISUAL_DEBUG:
+            # Get RGB image from camera 1
+            image_rgb_yolo_debug = cam_1.rgb.copy()
+            # If single channel, convert to 3 channels
+            if len(image_rgb_yolo_debug.shape) == 2:
+                image_rgb_yolo_debug = np.tile(image_rgb_yolo_debug[:, :, None], (1, 1, 3))
+
         for object_id in object_ids:
             if object_id not in self.model_cache:
                 yolo_model_path = os.path.join(self.model_dir, f'detection/obj_{object_id}/yolo11-detection-obj_{object_id}.pt')
@@ -225,13 +249,12 @@ class PoseEstimator(Node):
             RTs = [x.pose for x in cams]
             Ks = [x.intrinsics for x in cams]
             capture = Capture(images, Ks, RTs, object_id)
+
+            # Returns a dictionary mapping camera indices to a list of detections.
+            # list(detections.keys())) returns [0, 1, 2]
             detections = pose_estimator._detect(capture)
 
             if USE_FOUNDATIONPOSE_ESTIMATOR:
-                # Returns a dictionary mapping camera indices to a list of detections.
-                # Each detection is a dictionary with keys "bbox" and "bb_center".
-
-                # print("list(detections.keys()): ", list(detections.keys())) # [0, 1, 2]
 
                 # Let's use only RGB camera 1 for now.
 
@@ -244,6 +267,15 @@ class PoseEstimator(Node):
                     start_inference_time = time.time()
                     # 'bbox': (x1, y1, x2, y2),
                     (x1, y1, x2, y2) = detection['bbox']
+
+                    if DO_VISUAL_DEBUG:
+                        # Render the bounding box on the image, its object id, and its confidence
+                        # with color depending on the object ID
+                        confidence = detection['confidence']
+                        global YOLO_DEBUG_OUTPUT_IMAGE_COUNTER
+                        cv2.rectangle(image_rgb_yolo_debug, (int(x1), int(y1)), (int(x2), int(y2)), YOLO_OBJECT_ID_COLORS[object_id], 2)
+                        cv2.putText(image_rgb_yolo_debug, f"ID: {object_id}", (int(x1), int(y1)-30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, YOLO_OBJECT_ID_COLORS[object_id], 2)
+                        cv2.putText(image_rgb_yolo_debug, f"{confidence:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                     #print("BBox: ", (x1, y1, x2, y2))
                     #print("cam_1.depth: ", cam_1.depth.shape, np.sum((cam_1.depth > 0.001)),  cam_1.depth.dtype)
@@ -287,6 +319,17 @@ class PoseEstimator(Node):
                                                                     depth = depth,
                                                                     mask  = mask
                                                                 )
+
+                    if DO_VISUAL_DEBUG:                        
+                        # Draw the 3D bounding box for this object pose on the image, given the camera pose
+                        #draw_bounding_box(image_rgb_yolo_debug, object_pose, cam_1.pose, cam_1.intrinsics, object_id)
+                        mesh = self.object_cad_model_cache[object_id]
+                        to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
+                        bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
+                        center_pose = object_pose @ np.linalg.inv(to_origin)
+                        original_unscaled_K = cam_1.intrinsics.copy()
+                        image_rgb_yolo_debug = draw_posed_3d_box(original_unscaled_K, img=image_rgb_yolo_debug, ob_in_cam=center_pose, bbox=bbox, linewidth=1)
+                        image_rgb_yolo_debug = draw_xyz_axis(image_rgb_yolo_debug, ob_in_cam=center_pose, scale=0.1, K=original_unscaled_K, thickness=3, transparency=0, is_input_rgb=True)
                     
                     # Need to convert from meters (output by FoundationPose) to millimeters again
                     object_pose[0:3, 3] *= 1000.0
@@ -334,6 +377,10 @@ class PoseEstimator(Node):
                     pose_estimate.pose.orientation.z = rot[2]
                     pose_estimate.pose.orientation.w = rot[3]
                     pose_estimates.append(pose_estimate)
+
+        if DO_VISUAL_DEBUG:
+            cv2.imwrite(os.path.join(YOLO_DEBUG_OUTPUT_DIR, f"yolo_debug_output_{YOLO_DEBUG_OUTPUT_IMAGE_COUNTER:06d}.png"), image_rgb_yolo_debug)
+            YOLO_DEBUG_OUTPUT_IMAGE_COUNTER += 1
 
         return pose_estimates
 
