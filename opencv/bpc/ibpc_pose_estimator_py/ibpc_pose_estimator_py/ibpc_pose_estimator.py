@@ -39,7 +39,7 @@ except:
 DO_DEBUG_SESSION = False
 USE_FOUNDATIONPOSE_ESTIMATOR = True # else use baseline solution
 LOW_GPU_MEMORY_MODE=False
-SHORTER_SIDE = 720 # pixels
+SHORTER_SIDE = 500 # pixels
 OBJECT_CAD_MODEL_PATH = "/opt/ros/underlay/install/3d_models" # mounted at runtime through Docker
 
 
