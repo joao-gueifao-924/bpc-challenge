@@ -42,6 +42,7 @@ DO_DEBUG_SESSION = False
 USE_FOUNDATIONPOSE_ESTIMATOR = True # else use baseline solution
 LOW_GPU_MEMORY_MODE=False
 SHORTER_SIDE = 500 # pixels
+MIN_YOLO_CONFIDENCE_THRESHOLD = 0.4
 OBJECT_CAD_MODEL_PATH = "/opt/ros/underlay/install/3d_models" # mounted at runtime through Docker
 
 DO_VISUAL_DEBUG = False
@@ -76,6 +77,7 @@ if USE_FOUNDATIONPOSE_ESTIMATOR:
     from Utils import draw_xyz_axis, draw_posed_3d_box
     from estimater import PoseEstimator as FoundationPoseEstimator
     from datareader import IpdReader
+    import yolo_detection_filtering as yolofilter
     POSE_REFINER_TOTAL_ITERATIONS=5
     DEBUG_LEVEL = 1 if DO_DEBUG_SESSION else 0
     DEBUG_DIR='//debug'
@@ -232,6 +234,10 @@ class PoseEstimator(Node):
             if len(image_rgb_yolo_debug.shape) == 2:
                 image_rgb_yolo_debug = np.tile(image_rgb_yolo_debug[:, :, None], (1, 1, 3))
 
+
+        # Infer for all object IDs at once, then apply inter-object-class filtering on the detections:
+        detections_all_obj_ids = {}
+
         for object_id in object_ids:
             if object_id not in self.model_cache:
                 yolo_model_path = os.path.join(self.model_dir, f'detection/obj_{object_id}/yolo11-detection-obj_{object_id}.pt')
@@ -248,11 +254,22 @@ class PoseEstimator(Node):
             images = [np.tile(x.rgb[:,:,None], (1, 1, 3)) for x in cams]
             RTs = [x.pose for x in cams]
             Ks = [x.intrinsics for x in cams]
-            capture = Capture(images, Ks, RTs, object_id)
+            capture = Capture(images, None, Ks, RTs, object_id)
 
             # Returns a dictionary mapping camera indices to a list of detections.
             # list(detections.keys())) returns [0, 1, 2]
             detections = pose_estimator._detect(capture)
+
+            detections_all_obj_ids[object_id] = detections[0]
+        
+        # Filter out detections with confidence < 0.4:
+        for this_obj_id, detections_this_id in detections_all_obj_ids.items():
+            detections_all_obj_ids[this_obj_id] = [detection for detection in detections_this_id if detection['confidence'] >= 0.4]
+
+        detections_all_obj_ids = yolofilter.select_most_confident_detections(detections_all_obj_ids)
+        detections_all_obj_ids = yolofilter.filter_enclosed_detections_across_classes(detections_all_obj_ids, excluded_elongated_object_ids=[4, 8, 9])
+
+        for object_id, detections_this_id in detections_all_obj_ids.items():
 
             if USE_FOUNDATIONPOSE_ESTIMATOR:
 
@@ -263,15 +280,17 @@ class PoseEstimator(Node):
                 if DO_DEBUG_SESSION:
                     print(f"total detections of object #{object_id}: {len(detections[0])}")
 
-                for detection in detections[0]:
+                for detection in detections_this_id:
                     start_inference_time = time.time()
                     # 'bbox': (x1, y1, x2, y2),
                     (x1, y1, x2, y2) = detection['bbox']
+                    confidence = detection['confidence']
+                    if confidence < MIN_YOLO_CONFIDENCE_THRESHOLD:
+                        continue
 
                     if DO_VISUAL_DEBUG:
                         # Render the bounding box on the image, its object id, and its confidence
                         # with color depending on the object ID
-                        confidence = detection['confidence']
                         global YOLO_DEBUG_OUTPUT_IMAGE_COUNTER
                         cv2.rectangle(image_rgb_yolo_debug, (int(x1), int(y1)), (int(x2), int(y2)), YOLO_OBJECT_ID_COLORS[object_id], 2)
                         cv2.putText(image_rgb_yolo_debug, f"ID: {object_id}", (int(x1), int(y1)-30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, YOLO_OBJECT_ID_COLORS[object_id], 2)
@@ -328,8 +347,8 @@ class PoseEstimator(Node):
                         bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
                         center_pose = object_pose @ np.linalg.inv(to_origin)
                         original_unscaled_K = cam_1.intrinsics.copy()
-                        image_rgb_yolo_debug = draw_posed_3d_box(original_unscaled_K, img=image_rgb_yolo_debug, ob_in_cam=center_pose, bbox=bbox, linewidth=1)
-                        image_rgb_yolo_debug = draw_xyz_axis(image_rgb_yolo_debug, ob_in_cam=center_pose, scale=0.1, K=original_unscaled_K, thickness=3, transparency=0, is_input_rgb=True)
+                        image_rgb_yolo_debug = draw_posed_3d_box(original_unscaled_K, img=image_rgb_yolo_debug, ob_in_cam=center_pose, bbox=bbox, line_color=YOLO_OBJECT_ID_COLORS[object_id], linewidth=1)
+                        image_rgb_yolo_debug = draw_xyz_axis(image_rgb_yolo_debug, ob_in_cam=center_pose, scale=0.01, K=original_unscaled_K, thickness=3, transparency=0, is_input_rgb=True)
                     
                     # Need to convert from meters (output by FoundationPose) to millimeters again
                     object_pose[0:3, 3] *= 1000.0
@@ -346,7 +365,7 @@ class PoseEstimator(Node):
 
                     pose_estimate = PoseEstimateMsg()
                     pose_estimate.obj_id = object_id
-                    pose_estimate.score = 1.0
+                    pose_estimate.score = confidence
                     
                     pose_estimate.pose.position.x = object_pose[0, 3]
                     pose_estimate.pose.position.y = object_pose[1, 3]
