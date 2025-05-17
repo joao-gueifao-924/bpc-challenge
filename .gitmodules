@@ -1,3 +1,7 @@
 [submodule "FoundationPose"]
 	path = FoundationPose
 	url = https://github.com/joao-gueifao-924/FoundationPose.git
+[submodule "opencv/bpc/bpc_baseline"]
+	path = opencv/bpc/bpc_baseline
+	url = https://github.com/joao-gueifao-924/bpc_baseline
+	branch = single-yolo-model-grey-plus-depth
