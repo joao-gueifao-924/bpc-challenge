@@ -295,13 +295,29 @@ class PoseEstimator(Node):
                     color = cam_1.rgb.copy()
                     depth = cam_1.depth.copy()
 
+                    # Crop a ROI around the YOLO detection to then pass to FoundationPose estimator:
+                    roi_padding = 20
+                    roi_x = x1 - roi_padding
+                    roi_y = y1 - roi_padding
+                    roi_width = x2-x1 + 2 * roi_padding
+                    roi_height = y2-y1 + 2* roi_padding
+                    roi = (roi_x, roi_y, roi_width, roi_height)
+                    
+                    color = du.extract_roi_with_padding(color, roi)
+                    depth = du.extract_roi_with_padding(depth, roi)
+                    mask = du.extract_roi_with_padding(mask, roi)
+                    
+                    # Focal length does not change with an image crop, only the principal point.
+                    # We need to translate the principal point of the camera given the ROI's coordinate system origin
+                    K[0,2] -= roi_x
+                    K[1,2] -= roi_y
+
                     # Should we reduce image working size?
                     if SHORTER_SIDE is not None and SHORTER_SIDE > 0:
                         original_shorter_side = np.min(color.shape)
                         scale_factor = SHORTER_SIDE / original_shorter_side
                         if (scale_factor < 1.0):
-                            #self.printinfo("scale factor: ", scale_factor)
-                            K[:2] *= scale_factor
+                                                        K[:2] *= scale_factor # compatible with prior principal point translation given image crop
                             color = cv2.resize(color, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
                             depth = cv2.resize(depth, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
                             mask  = cv2.resize(mask,  None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
@@ -323,7 +339,7 @@ class PoseEstimator(Node):
 
                     if DO_VISUAL_DEBUG:                        
                         # Draw the 3D bounding box for this object pose on the image, given the camera pose
-                        #draw_bounding_box(image_rgb_yolo_debug, object_pose, cam_1.pose, cam_1.intrinsics, object_id)
+                        # For synthetic PBR data, we are defining camera 1 pose to be identity, hence no transformation on center_pose defined below:
                         mesh = self.object_cad_model_cache[object_id]
                         to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
                         bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
