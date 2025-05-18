@@ -196,10 +196,15 @@ class PoseEstimator(Node):
         self.srv = self.create_service(GetPoseEstimates, srv_name, self.srv_cb)
         self.object_cad_model_cache, _ = IpdReader.load_object_meshes(OBJECT_CAD_MODEL_PATH)
 
-        yolo_model_path = os.path.join(self.model_dir, "detection", "yolo-11-training-08-single-model-grey-plus-depth-hillshade.pt")
+        use_hillshade = False
+        if use_hillshade:
+            yolo_model_path = os.path.join(self.model_dir, "detection", "yolo-11-training-08-single-model-grey-plus-depth-hillshade.pt")
+        else:
+            yolo_model_path = os.path.join(self.model_dir, "detection", "yolo-11-training-07-single-model-3gray.pt")
+        
         yolo_thresholds_path = os.path.join(self.model_dir, "detection", "detection_confidence_thresholds.json")
 
-        self.object_detector = ObjectDetector(yolo_model_path, yolo_thresholds_path, is_synthetic=SYNTHETIC_DATASET_MODE)
+        self.object_detector = ObjectDetector(yolo_model_path, yolo_thresholds_path, is_synthetic=SYNTHETIC_DATASET_MODE, use_hillshade=use_hillshade)
         
 
     def srv_cb(self, request, response):
