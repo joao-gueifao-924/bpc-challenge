@@ -258,6 +258,9 @@ class PoseEstimator(Node):
 
         for object_id, detections_this_id in detections_all_obj_ids.items():
 
+            if object_id not in object_ids:
+                continue
+
             if USE_FOUNDATIONPOSE_ESTIMATOR:
 
                 image_rgb_rows, image_rgb_cols = image_cam_1.shape[0], image_cam_1.shape[1]
