@@ -9,7 +9,9 @@ import sys
 from typing import List, Optional, Union
 from bpc.inference.process_pose import PoseEstimator as PoseEstimatorBP
 from bpc.inference.process_pose import PoseEstimatorParams
-from bpc.utils.data_utils import Capture
+import bpc.utils.data_utils as du
+import bpc.inference.yolo_detection_filtering as ydf
+from bpc.inference.yolo_detection import ObjectDetector
 
 
 from geometry_msgs.msg import Pose as PoseMsg
@@ -42,10 +44,11 @@ DO_DEBUG_SESSION = False
 USE_FOUNDATIONPOSE_ESTIMATOR = True # else use baseline solution
 LOW_GPU_MEMORY_MODE=False
 SHORTER_SIDE = 500 # pixels
-MIN_YOLO_CONFIDENCE_THRESHOLD = 0.4
+DEPTH_IMAGE_SCALE_PX2MM = 0.1 # raw pixel value to millimeters
 OBJECT_CAD_MODEL_PATH = "/opt/ros/underlay/install/3d_models" # mounted at runtime through Docker
 
 DO_VISUAL_DEBUG = False
+SYNTHETIC_DATASET_MODE = False
 if DO_VISUAL_DEBUG:
     # Hijack the 3D models folder Docker volume mount to store debug output
     YOLO_DEBUG_OUTPUT_DIR = os.path.join(OBJECT_CAD_MODEL_PATH, "yolo_debug_output")
@@ -77,7 +80,6 @@ if USE_FOUNDATIONPOSE_ESTIMATOR:
     from Utils import draw_xyz_axis, draw_posed_3d_box
     from estimater import PoseEstimator as FoundationPoseEstimator
     from datareader import IpdReader
-    import yolo_detection_filtering as yolofilter
     POSE_REFINER_TOTAL_ITERATIONS=5
     DEBUG_LEVEL = 1 if DO_DEBUG_SESSION else 0
     DEBUG_DIR='//debug'
@@ -97,7 +99,7 @@ if USE_FOUNDATIONPOSE_ESTIMATOR:
 
     #     return shorter_side
     # shorter_side = get_suitable_shorter_side(total_gpu_memory)
-    # print("shorter_side: ", shorter_side)
+    # self.printinfo("shorter_side: ", shorter_side)
         
     
     print("Instantiating PoseEstimator class...")
@@ -174,6 +176,9 @@ def rot_to_quat(rot):
 
 class PoseEstimator(Node):
 
+    def printinfo(self, msg):
+        self.get_logger().info(msg)
+
     def __init__(self):
         super().__init__("bpc_pose_estimator")
         self.get_logger().info("Starting bpc_pose_estimator...")
@@ -190,6 +195,11 @@ class PoseEstimator(Node):
         self.get_logger().info(f"Pose estimates can be queried over srv {srv_name}.")
         self.srv = self.create_service(GetPoseEstimates, srv_name, self.srv_cb)
         self.object_cad_model_cache, _ = IpdReader.load_object_meshes(OBJECT_CAD_MODEL_PATH)
+
+        yolo_model_path = os.path.join(self.model_dir, "detection", "yolo-11-training-08-single-model-grey-plus-depth-hillshade.pt")
+        yolo_thresholds_path = os.path.join(self.model_dir, "detection", "detection_confidence_thresholds.json")
+
+        self.object_detector = ObjectDetector(yolo_model_path, yolo_thresholds_path, is_synthetic=SYNTHETIC_DATASET_MODE)
         
 
     def srv_cb(self, request, response):
@@ -223,70 +233,42 @@ class PoseEstimator(Node):
 
         # Uncomment this if you want the application to wait until the debugger attaches
         if DO_DEBUG_SESSION:
-            print("Waiting for debugger to attach...")
+            self.printinfo("Waiting for debugger to attach...")
             debugpy.wait_for_client()
-            print("Debugger just attached. Continuing...")
+            self.printinfo("Debugger just attached. Continuing...")
+
+        # Let's use only RGB camera 1 for now.
+        intrinsics_K_cam_1 = cam_1.intrinsics.copy()
+        image_cam_1 = cam_1.rgb.copy()
+        depth_cam_1_raw_values = cam_1.depth.copy()
+        depth_cam_1_metric_mm = du.transform_depth_image(depth_cam_1_raw_values, DEPTH_IMAGE_SCALE_PX2MM, max_depth_mm=5000.0)
 
         if DO_VISUAL_DEBUG:
             # Get RGB image from camera 1
-            image_rgb_yolo_debug = cam_1.rgb.copy()
+            image_rgb_yolo_debug = image_cam_1.copy()
             # If single channel, convert to 3 channels
             if len(image_rgb_yolo_debug.shape) == 2:
                 image_rgb_yolo_debug = np.tile(image_rgb_yolo_debug[:, :, None], (1, 1, 3))
 
+        detections_all_obj_ids = self.object_detector.detect(image_cam_1, depth_cam_1_raw_values)
 
-        # Infer for all object IDs at once, then apply inter-object-class filtering on the detections:
-        detections_all_obj_ids = {}
-
-        for object_id in object_ids:
-            if object_id not in self.model_cache:
-                yolo_model_path = os.path.join(self.model_dir, f'detection/obj_{object_id}/yolo11-detection-obj_{object_id}.pt')
-                pose_model_path = os.path.join(self.model_dir, f'rot_models/rot_{object_id}.pth')
-
-                pose_params = PoseEstimatorParams(yolo_model_path=yolo_model_path,
-                                                pose_model_path=pose_model_path, 
-                                                yolo_conf_thresh=0.1)
-                pose_estimator = PoseEstimatorBP(pose_params)
-                self.model_cache[object_id] = pose_estimator
-            pose_estimator = self.model_cache[object_id]
-            t = time.time()
-            cams = [cam_1, cam_2, cam_3]
-            images = [np.tile(x.rgb[:,:,None], (1, 1, 3)) for x in cams]
-            RTs = [x.pose for x in cams]
-            Ks = [x.intrinsics for x in cams]
-            capture = Capture(images, None, Ks, RTs, object_id)
-
-            # Returns a dictionary mapping camera indices to a list of detections.
-            # list(detections.keys())) returns [0, 1, 2]
-            detections = pose_estimator._detect(capture)
-
-            detections_all_obj_ids[object_id] = detections[0]
-        
-        # Filter out detections with confidence < 0.4:
-        for this_obj_id, detections_this_id in detections_all_obj_ids.items():
-            detections_all_obj_ids[this_obj_id] = [detection for detection in detections_this_id if detection['confidence'] >= 0.4]
-
-        detections_all_obj_ids = yolofilter.select_most_confident_detections(detections_all_obj_ids)
-        detections_all_obj_ids = yolofilter.filter_enclosed_detections_across_classes(detections_all_obj_ids, excluded_elongated_object_ids=[4, 8, 9])
+        excluded_elongated_object_ids=[4, 8, 9]
+        detections_all_obj_ids = ydf.filter_detections(detections_all_obj_ids, depth_cam_1_metric_mm, self.object_cad_model_cache, intrinsics_K_cam_1, excluded_elongated_object_ids, meshes_are_in_millimeters=False)
 
         for object_id, detections_this_id in detections_all_obj_ids.items():
 
             if USE_FOUNDATIONPOSE_ESTIMATOR:
 
-                # Let's use only RGB camera 1 for now.
-
-                image_rgb_rows, image_rgb_cols = cam_1.rgb.shape[0], cam_1.rgb.shape[1]
+                image_rgb_rows, image_rgb_cols = image_cam_1.shape[0], image_cam_1.shape[1]
                 
                 if DO_DEBUG_SESSION:
-                    print(f"total detections of object #{object_id}: {len(detections[0])}")
+                    self.printinfo(f"total detections of object #{object_id}: {len(detections_this_id)}")
 
                 for detection in detections_this_id:
                     start_inference_time = time.time()
                     # 'bbox': (x1, y1, x2, y2),
                     (x1, y1, x2, y2) = detection['bbox']
                     confidence = detection['confidence']
-                    if confidence < MIN_YOLO_CONFIDENCE_THRESHOLD:
-                        continue
 
                     if DO_VISUAL_DEBUG:
                         # Render the bounding box on the image, its object id, and its confidence
@@ -296,8 +278,8 @@ class PoseEstimator(Node):
                         cv2.putText(image_rgb_yolo_debug, f"ID: {object_id}", (int(x1), int(y1)-30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, YOLO_OBJECT_ID_COLORS[object_id], 2)
                         cv2.putText(image_rgb_yolo_debug, f"{confidence:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                    #print("BBox: ", (x1, y1, x2, y2))
-                    #print("cam_1.depth: ", cam_1.depth.shape, np.sum((cam_1.depth > 0.001)),  cam_1.depth.dtype)
+                    #self.printinfo("BBox: ", (x1, y1, x2, y2))
+                    #self.printinfo("cam_1.depth: ", cam_1.depth.shape, np.sum((cam_1.depth > 0.001)),  cam_1.depth.dtype)
 
                     # Create a binary mask for the detected object of same size as RGB image
                     mask = np.zeros((image_rgb_rows, image_rgb_cols), dtype=np.uint8)
@@ -307,7 +289,7 @@ class PoseEstimator(Node):
                     
                     if DO_DEBUG_SESSION:
                         valid = (cam_1.depth>=0.001) & (mask>0)
-                        print("Area of valid: ", valid.sum())
+                        self.printinfo(f"Area of valid: {valid.sum()}")
 
                     K     = cam_1.intrinsics.copy()
                     color = cam_1.rgb.copy()
@@ -318,7 +300,7 @@ class PoseEstimator(Node):
                         original_shorter_side = np.min(color.shape)
                         scale_factor = SHORTER_SIDE / original_shorter_side
                         if (scale_factor < 1.0):
-                            #print("scale factor: ", scale_factor)
+                            #self.printinfo("scale factor: ", scale_factor)
                             K[:2] *= scale_factor
                             color = cv2.resize(color, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
                             depth = cv2.resize(depth, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
@@ -328,8 +310,8 @@ class PoseEstimator(Node):
                     mask = mask.astype(bool)
 
                     # Multiply by the depth factor (0.1) to get from raw depth pixel values to millimeters,
-                    # then convert from lmilimeters to meters (what FoundationPose expects).
-                    depth *= 0.1 / 1000 # TODO put this convertion elsewhere?
+                    # then convert from millimeters to meters (what FoundationPose expects).
+                    depth *= DEPTH_IMAGE_SCALE_PX2MM / 1000.0
 
                     object_pose = foundationPoseEstimator.estimate( object_class_id=object_id,
                                                                     K     = K, 
@@ -359,9 +341,9 @@ class PoseEstimator(Node):
                     object_pose = np.linalg.inv(cam_1.pose) @ object_pose
 
                     if DO_DEBUG_SESSION:
-                        print("object_pose: ")
-                        print(object_pose)
-                        print("--------------------")
+                        self.printinfo("object_pose: ")
+                        self.printinfo(object_pose)
+                        self.printinfo("--------------------")
 
                     pose_estimate = PoseEstimateMsg()
                     pose_estimate.obj_id = object_id
@@ -378,24 +360,9 @@ class PoseEstimator(Node):
                     pose_estimates.append(pose_estimate)
 
                     inference_time = time.time() - start_inference_time
-                    print(f"Foundation Pose inference time for one object instance: {inference_time:.3f} seconds")
+                    if DO_DEBUG_SESSION:
+                        self.printinfo(f"Foundation Pose inference time for one object instance: {inference_time:.3f} seconds")
 
-            else: # this is code from baseline solution, just keeping it here for reference
-                pose_predictions = pose_estimator._match(capture, detections)
-                pose_estimator._estimate_rotation(pose_predictions)
-                for detection in pose_predictions:
-                    pose_estimate = PoseEstimateMsg()
-                    pose_estimate.obj_id = object_id
-                    pose_estimate.score = 1.0
-                    pose_estimate.pose.position.x = detection.pose[0, 3]
-                    pose_estimate.pose.position.y = detection.pose[1, 3]
-                    pose_estimate.pose.position.z = detection.pose[2, 3]
-                    rot = rot_to_quat(detection.pose[:3, :3])
-                    pose_estimate.pose.orientation.x = rot[0]
-                    pose_estimate.pose.orientation.y = rot[1]
-                    pose_estimate.pose.orientation.z = rot[2]
-                    pose_estimate.pose.orientation.w = rot[3]
-                    pose_estimates.append(pose_estimate)
 
         if DO_VISUAL_DEBUG:
             cv2.imwrite(os.path.join(YOLO_DEBUG_OUTPUT_DIR, f"yolo_debug_output_{YOLO_DEBUG_OUTPUT_IMAGE_COUNTER:06d}.png"), image_rgb_yolo_debug)

@@ -128,7 +128,5 @@ RUN rm -rf /usr/local/cuda/lib64/stubs
 # given that it will ultimately run within host's network.
 EXPOSE 5678
 
-ADD yolo_detection_filtering.py /yolo_detection_filtering.py
-
 CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_EXECUTABLE_NAME} \
     --ros-args -p model_dir:=${MODEL_DIR}
