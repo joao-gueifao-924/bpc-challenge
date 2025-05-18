@@ -317,7 +317,7 @@ class PoseEstimator(Node):
                         original_shorter_side = np.min(color.shape)
                         scale_factor = SHORTER_SIDE / original_shorter_side
                         if (scale_factor < 1.0):
-                                                        K[:2] *= scale_factor # compatible with prior principal point translation given image crop
+                            K[:2] *= scale_factor # compatible with prior principal point translation given image crop
                             color = cv2.resize(color, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
                             depth = cv2.resize(depth, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
                             mask  = cv2.resize(mask,  None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_NEAREST)
