@@ -250,7 +250,8 @@ class PoseEstimator(Node):
             if len(image_rgb_yolo_debug.shape) == 2:
                 image_rgb_yolo_debug = np.tile(image_rgb_yolo_debug[:, :, None], (1, 1, 3))
 
-        detections_all_obj_ids = self.object_detector.detect(image_cam_1, depth_cam_1_raw_values)
+        x_range = (860, 3180) # Empirical range to hide background clutter seen from camera 1 perspective. Image size is 3840x2160. This clutter is outside x_range.
+        detections_all_obj_ids = self.object_detector.detect(image_cam_1, depth_cam_1_raw_values, x_range)
 
         excluded_elongated_object_ids=[4, 8, 9]
         detections_all_obj_ids = ydf.filter_detections(detections_all_obj_ids, depth_cam_1_metric_mm, self.object_cad_model_cache, intrinsics_K_cam_1, excluded_elongated_object_ids, meshes_are_in_millimeters=False)
@@ -358,7 +359,7 @@ class PoseEstimator(Node):
 
                     if DO_DEBUG_SESSION:
                         self.printinfo("object_pose: ")
-                        self.printinfo(object_pose)
+                        print(object_pose)
                         self.printinfo("--------------------")
 
                     pose_estimate = PoseEstimateMsg()
