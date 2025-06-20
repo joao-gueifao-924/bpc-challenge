@@ -1,5 +1,5 @@
 
-# 6DoF Pose Estimation Solution for the 1st Perception Challenge for Bin-Picking
+# 6DoF Object Pose Estimation Solution for the 1st Perception Challenge for Bin-Picking
 _A Solution submission leveraging YOLOv11 and FoundationPose, with custom refinements_
 
 ## Note
