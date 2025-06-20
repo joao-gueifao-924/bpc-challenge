@@ -1,117 +1,118 @@
-
-# 6DoF Object Pose Estimation Solution for the 1st Perception Challenge for Bin-Picking
-_A Solution submission leveraging YOLOv11 and FoundationPose, with custom refinements_
-
-## Note
-This README is currently under active development. Some sections may be incomplete or inconsistent as updates are ongoing. Thank you for your understanding as I work to enhance the clarity and quality of this documentation.
+# Object Pose Estimation Solution for the 1st Perception Challenge for Bin-Picking
+_A Solution submission leveraging [YOLO11](https://docs.ultralytics.com/models/yolo11/) and [FoundationPose](https://nvlabs.github.io/FoundationPose/), with custom refinements_
 
 ## About This Project
-This repository contains the codebase developed for my participation in the 1st edition of the _Perception Challenge for Bin-picking_ (the "BPC Challenge"). It specifically documents my work on this computer vision competition.
+This repository contains the main codebase and documentation for my entry in the 1st edition of the _Perception Challenge for Bin-picking_ (the "BPC Challenge"), an international computer vision competition sponsored by Intrinsic and hosted by OpenCV. The challenge focuses on advancing robust 6DoF object pose estimation solutions for challenging industrial parts in bin-picking scenarios. More information can be found on the [official website](https://bpc.opencv.org/)—there, click on the _Participate_ button to access more details. 
 
-## Overview
-The BPC Challenge, sponsored by Intrinsic and hosted by OpenCV, aims to advance robust 6DoF pose estimation solutions for some of the most challenging industrial parts. This repository provides a detailed account of my approach, implementation, and results for the challenge.
+### Acknowledgements
 
-Currently, the effective main development branch is [`foundation-pose-phase2-submission`](https://github.com/joao-gueifao-924/bpc-challenge/tree/foundation-pose-phase2-submission), which is pending merge into `main`. 
+I would like to extend special thanks to **Nuno Salgueiro** and **Wolf Byttner**—both accomplished computer vision engineers and long-time friends—for their valuable insights and feedback throughout this project. Although the vast majority of the work and implementation is my own (as they were busy with other commitments), their discussions and suggestions were instrumental in refining key ideas. Together, we formed the team _Binsightful Pose_.
 
-The project leverages several components and includes custom modifications to third-party code. It integrates with external repositories via both Git submodules and subtrees:
-- YOLO 11 for 2D object detection
-- FoundationPose for 6D object pose estimation
-- SAM6D as an alternative for end-to-end object detection and pose estimation (not currently maintained, in its own branch [sam6d-exploration](https://github.com/joao-gueifao-924/bpc-challenge/tree/sam6d-exploration))
-- Video memory footprint reduction by loading/unloading deep learning models between host and GPU RAM, and obliterating memory caches at strategic inference runtime points
+### Challenge Structure
+
+The BPC Challenge was organized into three distinct phases, each aimed at assessing different facets of object pose estimation.
+
+- **Phase 1: Development**  
+  In this phase, teams were tasked with developing pose estimation solutions for 10 designated test parts. To support this, the organizers provided two types of datasets: a large synthetic dataset (intended for model development and training) and a real image dataset (intended for validation and for evaluating solution submissions). Both datasets, along with 3D models of the parts, were made available to all teams. Each team was permitted up to 50 solution submissions.
+
+- **Phase 2: Testing**
+  This phase evaluated the ability of solutions to generalize to entirely new, unseen objects. Teams were presented with 10 brand-new parts and were limited to just 4 submission attempts. Only 3D models and synthetic training data were provided—no real images—making it essential to avoid overfitting to the development set. The organizers noted that these 10 new parts were more challenging than the first set, with some featuring very similar shapes and others being nearly symmetrical, which could easily confuse both object detection and pose estimation algorithms.
+
+  **Phase 3: Robot-in-the-loop Testing**
+  This phase evaluated real-world performance by assessing successful detections, picks, and placements of physical parts, while using a real robotic arm. This phase used the exact same parts and team submissions made for Phase 2 without further modifications.
+
+### Competition Results
+
+You can view the official public leaderboard for the first two phases of the BPC Challenge [here](https://bpc.opencv.org/web/challenges/challenge-page/1/leaderboard/1), where my team, **Binsightful Pose**, is listed among the participants. I achieved a strong 6th place finish in the first phase, which I consider a solid result given the high level of competition from both academic and industry research teams, while I finished 14th in the second phase.
+
+### Technical Challenges: The Sim2Real Gap
+
+Qualitatively, my solution demonstrated strong and reliable performance on the synthetic datasets in both phases. However, there was a noticeable drop in accuracy when evaluated on the real, hidden dataset in the second phase. While it is difficult to draw definitive conclusions without further analysis—mainly due to time constraints—this discrepancy likely underscores the well-known "sim2real gap." This is a common challenge in computer vision and other fields, where algorithms where algorithms that work well on simulated (synthetic) data often struggle to achieve similar results on real-world data due to differences in appearance, noise, and other factors.
+
+### Reflections & Impact
+
+While I did not reach the top positions in the second phase, I am grateful for the opportunity to participate and have my work evaluated alongside many impressive research teams. I worked mostly independently on this project, and the experience was both challenging and rewarding. Most importantly, it was an immense learning opportunity that helped me grow my skills in object pose estimation and practical computer vision. I hope that sharing my approach and code here will be helpful to others interested in this area.
+
+## Solution Architecture
+The solution combines multiple deep learning models with custom optimizations:
+
+- **YOLO11**: Initial 2D object detection using a unified multi-class model
+- **FoundationPose**: 6D object pose estimation using YOLO11 detections as input
+- **Custom Refinements**: 
+  - Detection filtering through hard-rules on object types/classes and geometrical constraints
+  - Dynamic model loading/unloading to optimize GPU memory usage and cache clearing at strategic points during inference runtime.
+- **Alternative Approach**: SAM6D with FastSAM for end-to-end detection and pose estimation (available in `sam6d-exploration` branch, not currently maintained)
+
+This project is built on top of the official baseline solution provided by the competition organizers, which uses Docker and ROS2 to speed up development and facilitate testing.
+
+If you are new to this challenge or to this repository, it is strongly recommended to first review the `baseline_solution` branch of the [opencv/bpc](https://github.com/opencv/bpc.git) repository. Familiarizing yourself with its structure, workflow, and evaluation pipeline will give you important context for understanding the customizations and improvements made in this codebase.
+
 
 ## Repository Structure
 
 ```
 bpc-challenge/
-├── opencv/
+├── opencv/                    # Git Subtree
 │   └── bpc/
 │       ├── Dockerfile.estimator
 │       ├── Dockerfile.tester
 │       ├── LICENSE
 │       ├── README.md
-│       └── bpc_baseline/      # Submodule
-├── FoundationPose/            # Submodule
+│       └── bpc_baseline/      # Git Submodule
+├── FoundationPose/            # Git Submodule
 ├── .gitignore
 ├── .gitmodules
 ├── .gittrees
-├── README.md
+├── README.md                  # This README file
 └── ros2-jazzy-jalisco.dockerfile
 ```
 
-- **opencv/bpc/**: Contains a git subtree to the repository provided by the competition organizers. It contains the main estimation, testing and YOLO11 inference scripts, Dockerfiles, and custom modifications of mine.
-- **FoundationPose/**: Integrated as a git submodule, this provides the core object pose estimation functionality.
-- **bpc_baseline/**: A git submodule within `opencv/bpc`, tracking a specific branch for algorithm baseline solutions provided by the competition organizers, with further modifications of mine.
+### External Integrations
 
+**Git Subtree: opencv/bpc**
+- References the [opencv/bpc](https://github.com/opencv/bpc.git) repository (`baseline_solution` branch), provided by the competition organizers for bootstrapping participants's solutions.
+- Contains the main estimation, testing, and YOLO11 inference scripts
+- Includes significant custom modifications (see Custom Modifications section)
+- Tracked in `.gittrees` file for manual subtree management (sadly Git does not seamlessly manage Subtrees as it does for Submodules...)
 
-## External Integrations
+**Git Submodules:**
+- **FoundationPose/**: Tracks [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git) - core pose estimation algorithm
+- **opencv/bpc/bpc_baseline/**: Tracks [joao-gueifao-924/bpc_baseline](https://github.com/joao-gueifao-924/bpc_baseline) (`single-yolo-model-grey-plus-depth` branch) - YOLO11 2D detection
 
-### Git Subtree: opencv/bpc
+## Custom Modifications
 
-- The `opencv/bpc` directory is managed as a Git subtree, referencing the [opencv/bpc](https://github.com/opencv/bpc.git) repository, specifically the `baseline_solution` branch.
-- This subtree is tracked in the `.gittrees` file, which is manually maintained to document subtree updates. (Git does not seamlessly manage subtrees as it does for submodules, sadly.)
-- Significant modifications have been made to the subtree code, including:
-    - Integration of a new unified (multi-class) YOLO model and detection checks.
-    - Addition of ROI cropping around YOLO detections for improved pose estimation.
-    - Filtering detections by object IDs and background clutter.
-    - Visual debugging support (3D bounding box rendering).
-    - GPU memory detection and dynamic image scaling for VRAM optimization.
-    - Enhanced Dockerfiles for estimator and tester environments.
-    - Debugging support via `debugpy` for remote debugging in Docker.
+### opencv/bpc Subtree Changes
+- **Unified YOLO Model**: Switched from one-model-per-object-class approach (initially provided by competition organizers) to single multi-class model
+- **FoundationPose Integration**: Main inference script delegates to FoundationPose for pose estimation
+- **Detection Filtering**: Hard-rules filtering based on object types/classes and spatial constraints
+- **Enhanced Dockerfiles**: Improved estimator and tester Docker environments
+- **Debugging Support**: Added `debugpy` for remote debugging in Docker
 
+### FoundationPose Optimizations
+All custom optimizations for FoundationPose—especially those aimed at reducing video memory usage and enhancing runtime dependencies—are documented directly in the [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git) repository.  
+For details on the specific improvements and techniques applied, please refer to that repository's documentation and commit history.
 
-### Git Submodules
+As a side note, similar video memory optimizations were also made for SAM-6D. Refer to `sam6d-exploration` branch commit history if interested to know more.
 
-- **FoundationPose/**: Tracks [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git). Regularly updated to the latest commit, providing the core object pose estimation algorithm.
-- **opencv/bpc/bpc_baseline/**: Tracks [joao-gueifao-924/bpc_baseline](https://github.com/joao-gueifao-924/bpc_baseline) on the `single-yolo-model-grey-plus-depth` branch, which provides YOLO11 2D object detection alongside main competition testing scripts, using ROS2.
-
-
-## Commit History Highlights
-
-### opencv/bpc (Subtree)
-
-This subtree is composed of the following:
-
-- **YOLO 11 Model Integration**: including switching from a baseline one-model-per-object-class approach to a single multi-class model. (**TODO: why did I decide to do this?**)
-- **FoundationPose Model Integration**: main inference script delegates on [FoundationPose]([joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git)) algorithm implementation to determine the pose of the objects previously detected by YOLO 11.
-- **Detection Filtering**: Added options to filter detections provided by the YOLO model, based on hard-rules on the types/classes of objects and spatial constraints. 
-- **Submodule Updates**: Frequent updates to the `bpc_baseline` submodule, ensuring alignment with upstream changes from competition organizers.
-
-
-### FoundationPose (Submodule)
-
-- The `FoundationPose` submodule has been regularly updated to the latest commit, ensuring the estimator benefits from upstream improvements and bug fixes.
-- No custom code changes are tracked within this repository for `FoundationPose`; updates are managed via submodule pointers. Please refer to [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git) for further details and optimizations that were made.
-
-
-## Development Branch
-
-- The primary development occurs on the `foundation-pose-phase2-submission` branch, which includes all recent enhancements and subtree/submodule updates. This branch is pending merge into `main`.
-
+## Development Status
+- **Main Development Branch**: [`foundation-pose-phase2-submission`](https://github.com/joao-gueifao-924/bpc-challenge/tree/foundation-pose-phase2-submission) (pending merge into `main`)
+- All recent enhancements and subtree/submodule updates are on this branch
 
 ## How to Use
 
 **Clone with submodules:**
-
 ```bash
 git clone --recurse-submodules https://github.com/joao-gueifao-924/bpc-challenge.git
 cd bpc-challenge
 git checkout foundation-pose-phase2-submission
 ```
 
-**Docker-based workflows:**
-The build is done in three steps, one per Docker image. Each docker image depends on the previous one:
-1. Build FoundationPose Docker image
-2. Build ROS2 Jazzy Docker image
-3. Build BPC Challenge Docker image - use the provided `Dockerfile.estimator` and `Dockerfile.tester` in `opencv/bpc/` for reproducible builds and testing environments.
+**Docker Build Process:**
 
-
-## Custom Modifications
-
-- The subtree in `opencv/bpc` is not a vanilla copy; it contains significant custom logic for detection filtering, pose estimation, and debugging.
-- FoundationPose submodule itself contains several optimizations that were made.
-- All subtree updates and their rationale are documented in the `.gittrees` file.
-
+The build follows a three-step process with dependent Docker images:
+1. Build FoundationPose Docker image (`FoundationPose/docker/dockerfile`)
+2. Build ROS2 Jazzy Docker image (`ros2-jazzy-jalisco.dockerfile`)
+3. Build BPC Challenge Docker image (`opencv/bpc/Dockerfile.estimator`)
 
 ## License
-
-- See `opencv/bpc/LICENSE` and the respective licenses of submodules/subtrees for usage terms.
+See `opencv/bpc/LICENSE` and respective licenses of submodules/subtrees for usage terms.
