@@ -13,11 +13,11 @@ The BPC Challenge, sponsored by Intrinsic and hosted by OpenCV, aims to advance 
 
 Currently, the effective main development branch is [`foundation-pose-phase2-submission`](https://github.com/joao-gueifao-924/bpc-challenge/tree/foundation-pose-phase2-submission), which is pending merge into `main`. 
 
-The project leverages several advanced components, including custom modifications to third-party code and integration with external repositories via both Git submodules and subtrees:
+The project leverages several components and includes custom modifications to third-party code. It integrates with external repositories via both Git submodules and subtrees:
 - YOLO 11 for 2D object detection
 - FoundationPose for 6D object pose estimation
-- SAM6D as an alternative for end-to-end object detection and pose estimation (not currently maintained)
-- Memory footprint reduction by loading/unloading deep learning models between host and GPU RAM, and obliterating memory caches at specific inference runtime points
+- SAM6D as an alternative for end-to-end object detection and pose estimation (not currently maintained, in its own branch [sam6d-exploration](https://github.com/joao-gueifao-924/bpc-challenge/tree/sam6d-exploration))
+- Video memory footprint reduction by loading/unloading deep learning models between host and GPU RAM, and obliterating memory caches at strategic inference runtime points
 
 ## Repository Structure
 
@@ -38,9 +38,9 @@ bpc-challenge/
 └── ros2-jazzy-jalisco.dockerfile
 ```
 
-- **opencv/bpc/**: Contains the main estimator and testing scripts, Dockerfiles, and a subtree to a third-party repository with custom modifications.
-- **FoundationPose/**: Integrated as a submodule, this provides the core pose estimation functionality.
-- **bpc_baseline/**: A submodule within `opencv/bpc`, tracking a specific branch for baseline solutions.
+- **opencv/bpc/**: Contains a git subtree to the repository provided by the competition organizers. It contains the main estimation, testing and YOLO11 inference scripts, Dockerfiles, and custom modifications of mine.
+- **FoundationPose/**: Integrated as a git submodule, this provides the core object pose estimation functionality.
+- **bpc_baseline/**: A git submodule within `opencv/bpc`, tracking a specific branch for algorithm baseline solutions provided by the competition organizers, with further modifications of mine.
 
 
 ## External Integrations
@@ -48,7 +48,7 @@ bpc-challenge/
 ### Git Subtree: opencv/bpc
 
 - The `opencv/bpc` directory is managed as a Git subtree, referencing the [opencv/bpc](https://github.com/opencv/bpc.git) repository, specifically the `baseline_solution` branch.
-- This subtree is tracked in the `.gittrees` file, which is manually maintained to document subtree updates.
+- This subtree is tracked in the `.gittrees` file, which is manually maintained to document subtree updates. (Git does not seamlessly manage subtrees as it does for submodules, sadly.)
 - Significant modifications have been made to the subtree code, including:
     - Integration of a new unified (multi-class) YOLO model and detection checks.
     - Addition of ROI cropping around YOLO detections for improved pose estimation.
@@ -61,22 +61,20 @@ bpc-challenge/
 
 ### Git Submodules
 
-- **FoundationPose/**: Tracks [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git). Regularly updated to the latest commit, providing the core pose estimation algorithm.
-- **opencv/bpc/bpc_baseline/**: Tracks [joao-gueifao-924/bpc_baseline](https://github.com/joao-gueifao-924/bpc_baseline) on the `single-yolo-model-grey-plus-depth` branch, ensuring compatibility with the latest detection and pose estimation pipelines.
+- **FoundationPose/**: Tracks [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git). Regularly updated to the latest commit, providing the core object pose estimation algorithm.
+- **opencv/bpc/bpc_baseline/**: Tracks [joao-gueifao-924/bpc_baseline](https://github.com/joao-gueifao-924/bpc_baseline) on the `single-yolo-model-grey-plus-depth` branch, which provides YOLO11 2D object detection alongside main competition testing scripts, using ROS2.
 
 
 ## Commit History Highlights
 
 ### opencv/bpc (Subtree)
 
-Recent commit activity demonstrates an iterative and feature-driven development approach, including:
+This subtree is composed of the following:
 
-- **YOLO Model Integration**: Multiple commits updating the YOLO model usage, including switching to a single model and refining detection filtering.
-- **Detection Filtering**: Added options to filter detections by object IDs and spatial constraints (e.g., x_range for background clutter).
-- **ROI Cropping**: Enhanced pose estimation by cropping around detected objects.
-- **Visual Debugging**: Added 3D bounding box rendering for easier debugging.
-- **Performance Optimizations**: Dynamic image scaling based on GPU memory and Dockerfile improvements for CUDA/ROS2 integration.
-- **Submodule Updates**: Frequent updates to the `bpc_baseline` submodule, ensuring alignment with upstream changes and new features.
+- **YOLO 11 Model Integration**: including switching from a baseline one-model-per-object-class approach to a single multi-class model. (**TODO: why did I decide to do this?**)
+- **FoundationPose Model Integration**: main inference script delegates on [FoundationPose]([joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git)) algorithm implementation to determine the pose of the objects previously detected by YOLO 11.
+- **Detection Filtering**: Added options to filter detections provided by the YOLO model, based on hard-rules on the types/classes of objects and spatial constraints. 
+- **Submodule Updates**: Frequent updates to the `bpc_baseline` submodule, ensuring alignment with upstream changes from competition organizers.
 
 
 ### FoundationPose (Submodule)
