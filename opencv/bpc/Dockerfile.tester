@@ -22,6 +22,8 @@ RUN . /opt/ros/jazzy/setup.sh \
 
 FROM underlay AS overlay
 
+RUN mkdir -p /opt/ros/overlay/src
+
 RUN apt-get update \
     &&  apt install -y ros-jazzy-rmw-zenoh-cpp \
     && rm -rf /var/lib/apt/lists/*
