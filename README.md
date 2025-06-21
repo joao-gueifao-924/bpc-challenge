@@ -2,7 +2,12 @@
 _A Solution submission leveraging [YOLO11](https://docs.ultralytics.com/models/yolo11/) and [FoundationPose](https://nvlabs.github.io/FoundationPose/), with custom refinements_
 
 ## About This Project
-This repository contains the main codebase and documentation for my entry in the 1st edition of the _Perception Challenge for Bin-picking_ (the "BPC Challenge"), an international computer vision competition sponsored by Intrinsic and hosted by OpenCV. The challenge focuses on advancing robust 6DoF object pose estimation solutions for challenging industrial parts in bin-picking scenarios. More information can be found on the [official website](https://bpc.opencv.org/)—there, click on the _Participate_ button to access more details. 
+This repository contains the main codebase and documentation for my entry in the 1st edition of the _Perception Challenge for Bin-picking_ (the "BPC Challenge"), an international computer vision competition sponsored by Intrinsic and hosted by OpenCV. The challenge focuses on advancing robust 6DoF object pose estimation solutions for challenging industrial parts in bin-picking scenarios.
+
+**What is 6DoF Object Pose Estimation?**
+6DoF (6 Degrees of Freedom) object pose estimation is a computer vision task that determines both the 3D position and 3D orientation of objects in space. The "6 degrees" refer to the three translational movements (X, Y, Z coordinates) and three rotational movements (roll, pitch, yaw angles) that completely describe an object's pose in 3D space. This technique is crucial for robotics applications like bin-picking, where robots need to precisely locate and grasp objects that may be randomly oriented and partially occluded in cluttered environments.
+
+More information about the challenge can be found on the [official website](https://bpc.opencv.org/)—there, click on the _Participate_ button to access more details.
 
 ### Acknowledgements
 
@@ -34,18 +39,23 @@ Qualitatively, my solution demonstrated strong and reliable performance on the s
 While I did not reach the top positions in the second phase, I am grateful for the opportunity to participate and have my work evaluated alongside many impressive research teams. I worked mostly independently on this project, and the experience was both challenging and rewarding. Most importantly, it was an immense learning opportunity that helped me grow my skills in object pose estimation and practical computer vision. I hope that sharing my approach and code here will be helpful to others interested in this area.
 
 ## Solution Architecture
+
+The solution follows a straightforward pipeline for 6D pose estimation:
+
+[Input Image] → [YOLO11 Detection] → [Detection Filtering] → [FoundationPose Estimation] → [6D Pose Output]
+
 The solution combines multiple deep learning models with custom optimizations:
 
 - **YOLO11**: Initial 2D object detection using a unified multi-class model
 - **FoundationPose**: 6D object pose estimation using YOLO11 detections as input
 - **Custom Refinements**: 
-  - Detection filtering through hard-rules on object types/classes and geometrical constraints
+  - Detection filtering to remove YOLO false-positives using hard-coded rules based on object types/classes and geometric constraints
   - Dynamic model loading/unloading to optimize GPU memory usage and cache clearing at strategic points during inference runtime.
 - **Alternative Approach**: SAM6D with FastSAM for end-to-end detection and pose estimation (available in `sam6d-exploration` branch, not currently maintained)
 
 This project is built on top of the official baseline solution provided by the competition organizers, which uses Docker and ROS2 to speed up development and facilitate testing.
 
-If you are new to this challenge or to this repository, it is strongly recommended to first review the `baseline_solution` branch of the [opencv/bpc](https://github.com/opencv/bpc.git) repository. Familiarizing yourself with its structure, workflow, and evaluation pipeline will give you important context for understanding the customizations and improvements made in this codebase.
+If you are new to this challenge or to this repository, it is strongly recommended to first review the [`baseline_solution` branch of the opencv/bpc](https://github.com/opencv/bpc/tree/baseline_solution) repository. Familiarizing yourself with its structure, workflow, and evaluation pipeline will give you important context for understanding the customizations and improvements made in this codebase.
 
 
 ## Repository Structure
@@ -82,15 +92,18 @@ bpc-challenge/
 ## Custom Modifications
 
 ### opencv/bpc Subtree Changes
-- **Unified YOLO Model**: Switched from one-model-per-object-class approach (initially provided by competition organizers) to single multi-class model
+- **Unified YOLO Model**: Replaced the original one-model-per-object-class approach (which used multiple pre-trained YOLO11n instances provided by competition organizers) with a single multi-class YOLO11m model. This new model was trained specifically on the 10 parts required for phase 2.
 - **FoundationPose Integration**: Main inference script delegates to FoundationPose for pose estimation
 - **Detection Filtering**: Hard-rules filtering based on object types/classes and spatial constraints
 - **Enhanced Dockerfiles**: Improved estimator and tester Docker environments
 - **Debugging Support**: Added `debugpy` for remote debugging in Docker
 
 ### FoundationPose Optimizations
-All custom optimizations for FoundationPose—especially those aimed at reducing video memory usage and enhancing runtime dependencies—are documented directly in the [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git) repository.  
-For details on the specific improvements and techniques applied, please refer to that repository's documentation and commit history.
+All custom optimizations for FoundationPos are documented directly in the [joao-gueifao-924/FoundationPose](https://github.com/joao-gueifao-924/FoundationPose.git) repository. For details on the specific improvements and techniques applied, please refer to that repository's documentation and commit history.
+
+Key optimizations include:
+- **Memory optimization**: Reduced GPU memory usage to accommodate development on a laptop with RTX 4060 (8GB VRAM)
+- **Dependency modernization**: Streamlined the dependency graph and updated to the latest versions, particularly CUDA and PyTorch libraries
 
 As a side note, similar video memory optimizations were also made for SAM-6D. Refer to `sam6d-exploration` branch commit history if interested to know more.
 
@@ -100,19 +113,73 @@ As a side note, similar video memory optimizations were also made for SAM-6D. Re
 
 ## How to Use
 
-**Clone with submodules:**
+**Important**: Before proceeding, please familiarize yourself with the README for the [`baseline_solution` branch of the opencv/bpc](https://github.com/opencv/bpc/tree/baseline_solution) repository, particularly the [Setting up](https://github.com/opencv/bpc/tree/baseline_solution?tab=readme-ov-file#setting-up-) section. The instructions below are adapted from that documentation.
+
+
+#### Setup a workspace
 ```bash
+mkdir -p ~/bpc_ws
+```
+
+#### Create a virtual environment 
+
+If you're already working in some form of virtualenv you can continue to use that and install `bpc` in that instead of making a new one. 
+
+```bash
+python3 -m venv ~/bpc_ws/bpc_env
+```
+
+#### Activate that virtual env
+
+```bash
+source ~/bpc_ws/bpc_env/bin/activate
+```
+
+For any new shell interacting with the `bpc` command you will have to rerun this source command.
+
+#### Install bpc 
+
+Install the bpc command from the ibpc pypi package. (bpc was already taken :-( )
+
+```bash
+pip install ibpc
+```
+
+#### Fetch the source repository with submodules
+
+```bash
+cd ~/bpc_ws
 git clone --recurse-submodules https://github.com/joao-gueifao-924/bpc-challenge.git
 cd bpc-challenge
 git checkout foundation-pose-phase2-submission
 ```
 
-**Docker Build Process:**
+#### Fetch the dataset
 
-The build follows a three-step process with dependent Docker images:
-1. Build FoundationPose Docker image (`FoundationPose/docker/dockerfile`)
-2. Build ROS2 Jazzy Docker image (`ros2-jazzy-jalisco.dockerfile`)
-3. Build BPC Challenge Docker image (`opencv/bpc/Dockerfile.estimator`)
+```bash
+cd ~/bpc_ws/bpc
+bpc fetch ipd
+```
+This will download the ipd_base.zip, ipd_models.zip, and ipd_val.zip (approximately 6GB combined). The dataset is also available for manual download on [Hugging Face](https://huggingface.co/datasets/bop-benchmark/ipd).
+
+
+
+#### Build the Docker images, in the following order:
+```bash
+# Build FoundationPose base image first:
+docker build -t foundationpose_image -f FoundationPose/docker/dockerfile .
+
+# Build ROS2 intermediary image, which bases upon FoundationPose image:
+docker build -t ros2_jazzy_image -f ros2-jazzy-jalisco.dockerfile .
+
+# Build the final estimator image, which bases upon ROS2 image:
+docker build -t bpc_estimator_image -f opencv/bpc/Dockerfile.estimator .
+```
+
+#### Run the evaluation pipeline:
+```bash
+bpc test bpc_pose_estimator:example ipd
+````
 
 ## License
 See `opencv/bpc/LICENSE` and respective licenses of submodules/subtrees for usage terms.
