@@ -80,7 +80,7 @@ bpc-challenge/
 ### External Integrations
 
 **Git Subtree: opencv/bpc**
-- References the [opencv/bpc](https://github.com/opencv/bpc.git) repository (`baseline_solution` branch), provided by the competition organizers for bootstrapping participants's solutions.
+- References the [opencv/bpc](https://github.com/opencv/bpc.git) repository (`baseline_solution` branch), provided by the competition organizers for bootstrapping participants' solutions.
 - Contains the main estimation, testing, and YOLO11 inference scripts
 - Includes significant custom modifications (see Custom Modifications section)
 - Tracked in `.gittrees` file for manual subtree management (sadly Git does not seamlessly manage Subtrees as it does for Submodules...)
@@ -103,7 +103,8 @@ All custom optimizations for FoundationPos are documented directly in the [joao-
 
 Key optimizations include:
 - **Memory optimization**: Reduced GPU memory usage to accommodate development on a laptop with RTX 4060 (8GB VRAM)
-- **Dependency modernization**: Streamlined the dependency graph and updated to the latest versions, particularly CUDA and PyTorch libraries
+- **Inference Speedup**: Optimized PyTorch runtime configuration to accelerate inference - reducing total processing time from nearly 12 hours to approximately 5.5 hours.
+- **Dependency modernization**: Streamlined the software dependency graph and updated to the latest versions, particularly CUDA and PyTorch libraries
 
 As a side note, similar video memory optimizations were also made for SAM-6D. Refer to `sam6d-exploration` branch commit history if interested to know more.
 
